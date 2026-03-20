@@ -466,6 +466,8 @@ def test_uia_click_dry_run(monkeypatch) -> None:
 def test_uia_type_dry_run(monkeypatch) -> None:
     monkeypatch.setattr(
         cli,
+        "_load_windows_accessibility",
+        lambda: SimpleNamespace(
             find_matching_elements=lambda *args, **kwargs: [
                 UIAElement(
                     path="window[1] > child[1]",
@@ -571,6 +573,7 @@ def test_uia_type_executes(monkeypatch) -> None:
     result = runner.invoke(
         cli.app,
         [
+            "uia-type",
             "--app",
             "Outlook",
             "--contains",
