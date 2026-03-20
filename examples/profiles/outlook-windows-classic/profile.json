@@ -1,0 +1,77 @@
+{
+  "profile_id": "outlook-windows-classic",
+  "app_name": "Classic Outlook Compose",
+  "platform_hint": "windows",
+  "notes": "Visual fallback profile captured from the classic Outlook compose window on Windows. This baseline assumes the untitled compose layout with the Message ribbon visible and is intended as a CV fallback when UIA is unavailable or unreliable.",
+  "baseline": {
+    "width": 1920,
+    "height": 1376
+  },
+  "anchors": {
+    "primary": {
+      "id": "message_tabs_top_left",
+      "path": "anchor_primary.png",
+      "x": 14,
+      "y": 46,
+      "confidence_threshold": 0.88
+    }
+  },
+  "elements": {
+    "send_btn": {
+      "label": "Send",
+      "aliases": [
+        "send email",
+        "send message"
+      ],
+      "rel_x": 87.0,
+      "rel_y": 309.0,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    "to_field": {
+      "label": "To",
+      "aliases": [
+        "recipient",
+        "to line"
+      ],
+      "rel_x": 1070.5,
+      "rel_y": 275.5,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    "subject_field": {
+      "label": "Subject",
+      "aliases": [
+        "email subject",
+        "subject line"
+      ],
+      "rel_x": 1070.5,
+      "rel_y": 397.0,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    "body_field": {
+      "label": "Message body",
+      "aliases": [
+        "body",
+        "email body",
+        "message area"
+      ],
+      "rel_x": 933.0,
+      "rel_y": 876.5,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    "attach_file_btn": {
+      "label": "Attach File",
+      "aliases": [
+        "attach",
+        "add attachment"
+      ],
+      "rel_x": 1258.0,
+      "rel_y": 158.0,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    }
+  }
+}

@@ -29,3 +29,9 @@ class PyAutoGuiAdapter:
     ) -> None:
         pyautogui.moveTo(x=start_x, y=start_y)
         pyautogui.dragTo(x=end_x, y=end_y, duration=duration, button=button)
+
+    def write_text(self, text: str, *, interval: float = 0.0) -> None:
+        pyautogui.write(text, interval=interval)
+
+    def hotkey(self, *keys: str) -> None:
+        pyautogui.hotkey(*keys)

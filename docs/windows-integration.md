@@ -2,6 +2,22 @@
 
 This document is the concrete work plan for moving `app-automate` from the current macOS-first prototype to a Windows-first runtime.
 
+## Current Status
+
+As of 2026-03-20, the Windows UIA path is implemented and live-tested with `uv` against:
+
+- Visual Studio Code
+- classic Outlook for Windows
+- new Outlook for Windows
+
+Validated commands now include:
+
+- `uia-list`
+- `uia-click`
+- `uia-type`
+
+The most reliable Windows typing path is direct UIA focus plus UIA `SendKeys`. Mouse-only typing through `pyautogui` is not reliable enough for Outlook compose fields.
+
 ## Goal
 
 On Windows, the runtime should support two backends:
@@ -87,6 +103,7 @@ Target CLI parity:
 - `uia-list --app "App Name" --actionable-only`
 - `uia-click --app "App Name" --contains "Insert" --dry-run`
 - `uia-click --app "App Name" --contains "Insert" --action right-click --execute`
+- `uia-type --app "App Name" --contains "Search" --text "hello" --execute`
 
 The command shape should stay close to:
 - `ax-list`
@@ -145,6 +162,7 @@ Support:
 
 Success condition:
 - use `uia-click` on at least one app with good UIA support
+- use `uia-type` on at least one app with editable UIA fields
 
 ### Phase 3: training/capture validation
 
@@ -189,6 +207,12 @@ Recommended validation apps:
 - one browser or Electron app
 - one app with poor accessibility and stable visuals
 
+Confirmed working examples:
+
+- classic Outlook compose workflow
+- VS Code caption-button targeting
+- new Outlook tab targeting
+
 ## Risks Specific To Windows
 
 - DPI scaling can desynchronize capture and input coordinates.
@@ -232,8 +256,44 @@ Initial Windows support is good enough when all of these are true:
 
 - `uia-list` works on at least one accessible Windows app
 - `uia-click` works on at least one accessible Windows app
+- `uia-type` works on at least one accessible Windows app with editable fields
 - the visual profile path works on at least one poor-accessibility Windows app
 - coordinate alignment is verified at more than one display scale
 - docs explain when to use UIA versus CV
 
 That is the bar for a real Windows milestone, not just a port.
+
+## Example: Classic Outlook Compose
+
+This was validated live on 2026-03-20 against classic Outlook for Windows.
+
+1. Inspect actionable controls:
+
+```bash
+uv run app-automate uia-list --app "Inbox-will.wade@thinksmartbox.com - Outlook" --max-depth 20 --actionable-only --json
+```
+
+2. Open a new draft:
+
+```bash
+uv run app-automate uia-click --app "Inbox-will.wade@thinksmartbox.com - Outlook" --contains "New Email" --max-depth 20 --execute
+```
+
+3. Type a subject into the compose window:
+
+```bash
+uv run app-automate uia-type --app "Untitled - Message (HTML)" --contains "Subject" --control-type EditControl --max-depth 24 --text "App Automate Windows Outlook Test" --replace --execute
+```
+
+4. Type the message body:
+
+```bash
+uv run app-automate uia-type --app "App Automate Windows Outlook Test - Message (HTML)" --contains "Page 1 content" --control-type EditControl --max-depth 24 --text "Hello from app-automate on Windows via UIA SendKeys." --replace --execute
+```
+
+Notes:
+
+- The compose window title changes after the subject is entered.
+- Outlook commits the subject once focus moves off the subject field, so the body step is a good verification point.
+- Classic Outlook needed deeper traversal than the original defaults; `--max-depth 20` and `--max-depth 24` were used for reliable discovery.
+- For this workflow, direct UIA invoke plus UIA `SendKeys` was reliable; generic mouse typing was not.

@@ -32,6 +32,17 @@ class UIElement:
     def actionable(self) -> bool:
         return False
 
+    @property
+    def has_bounds(self) -> bool:
+        return (
+            self.x is not None
+            and self.y is not None
+            and self.width is not None
+            and self.height is not None
+            and self.width > 0
+            and self.height > 0
+        )
+
     def as_dict(self) -> dict[str, object]:
         return {
             "path": self.path,
@@ -47,6 +58,7 @@ class UIElement:
             "y": self.y,
             "width": self.width,
             "height": self.height,
+            "has_bounds": self.has_bounds,
             "enabled": self.enabled,
             "depth": self.depth,
             "child_count": self.child_count,

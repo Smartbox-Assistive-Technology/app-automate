@@ -262,6 +262,31 @@ def _run_ax_action(
     return payload
 
 
+def _type_into_element(
+    *,
+    adapter: ActionAdapter,
+    element,
+    text: str,
+    replace: bool,
+    interval: float,
+) -> dict[str, object]:
+    x, y = _element_center(element)
+    adapter.click(x, y)
+    if replace:
+        adapter.hotkey("ctrl", "a")
+        adapter.hotkey("backspace")
+    adapter.write_text(text, interval=interval)
+    return {
+        "path": element.path,
+        "label": element.label,
+        "class_name": element.class_name,
+        "x": round(x, 2),
+        "y": round(y, 2),
+        "text": text,
+        "replace": replace,
+    }
+
+
 def _parse_crop_box(raw: str) -> Any:
     from app_automate.builder.models import CropBox
 
@@ -598,7 +623,7 @@ def uia_list(
     max_depth: Annotated[
         int,
         typer.Option("--max-depth", min=0, help="Maximum UI tree depth to inspect."),
-    ] = 3,
+    ] = 8,
     actionable_only: Annotated[
         bool,
         typer.Option(
@@ -677,7 +702,7 @@ def uia_click(
     max_depth: Annotated[
         int,
         typer.Option("--max-depth", min=0, help="Maximum UI tree depth to inspect."),
-    ] = 3,
+    ] = 8,
     index: Annotated[
         int,
         typer.Option(
@@ -717,8 +742,9 @@ def uia_click(
     ] = True,
 ) -> None:
     try:
+        windows_accessibility = _load_windows_accessibility()
         element = _select_semantic_element(
-            finder=_load_windows_accessibility().find_matching_elements,
+            finder=windows_accessibility.find_matching_elements,
             app_name=app_name,
             contains=contains,
             control_type=control_type,
@@ -751,17 +777,161 @@ def uia_click(
             typer.echo(json.dumps(payload, indent=2))
             return
 
-        payload = _run_ax_action(
-            adapter=_create_action_adapter(),
-            element=element,
-            action=action,
-            drag_dx=drag_dx,
-            drag_dy=drag_dy,
-            scroll_clicks=scroll_clicks,
-        )
+        direct_click = getattr(windows_accessibility, "click_matching_element", None)
+        if action == "click" and direct_click is not None:
+            element = direct_click(
+                app_name,
+                contains=contains,
+                control_type=control_type,
+                max_depth=max_depth,
+                index=index,
+            )
+            x, y = _element_center(element)
+            payload = {
+                "path": element.path,
+                "label": element.label,
+                "class_name": element.class_name,
+                "x": round(x, 2),
+                "y": round(y, 2),
+                "action": action,
+            }
+        else:
+            payload = _run_ax_action(
+                adapter=_create_action_adapter(),
+                element=element,
+                action=action,
+                drag_dx=drag_dx,
+                drag_dy=drag_dy,
+                scroll_clicks=scroll_clicks,
+            )
         payload["automation_id"] = element.automation_id
     except Exception as exc:
         typer.echo(f"uia-click failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(json.dumps(payload, indent=2))
+
+
+@app.command("uia-type")
+def uia_type(
+    app_name: Annotated[
+        str,
+        typer.Option("--app", help="Windows app or window name to inspect."),
+    ],
+    contains: Annotated[
+        str,
+        typer.Option("--contains", help="Substring match for the target label."),
+    ],
+    text: Annotated[
+        str,
+        typer.Option("--text", help="Text to type into the matched element."),
+    ],
+    max_depth: Annotated[
+        int,
+        typer.Option("--max-depth", min=0, help="Maximum UI tree depth to inspect."),
+    ] = 12,
+    index: Annotated[
+        int,
+        typer.Option(
+            "--index",
+            min=1,
+            help="1-based match index when multiple accessible elements match.",
+        ),
+    ] = 1,
+    control_type: Annotated[
+        str | None,
+        typer.Option(
+            "--control-type",
+            help="Require an exact UIA control type name match.",
+        ),
+    ] = None,
+    replace: Annotated[
+        bool,
+        typer.Option(
+            "--replace/--append",
+            help="Select all existing text before typing.",
+        ),
+    ] = False,
+    interval: Annotated[
+        float,
+        typer.Option(
+            "--interval",
+            min=0.0,
+            help="Delay between typed characters in seconds.",
+        ),
+    ] = 0.0,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run/--execute",
+            help="Preview the UIA target and text without sending input.",
+        ),
+    ] = True,
+) -> None:
+    try:
+        windows_accessibility = _load_windows_accessibility()
+        element = _select_semantic_element(
+            finder=windows_accessibility.find_matching_elements,
+            app_name=app_name,
+            contains=contains,
+            control_type=control_type,
+            max_depth=max_depth,
+            index=index,
+        )
+        x, y = _element_center(element)
+        payload = {
+            "path": element.path,
+            "label": element.label,
+            "class_name": element.class_name,
+            "automation_id": element.automation_id,
+            "x": round(x, 2),
+            "y": round(y, 2),
+            "text": text,
+            "replace": replace,
+            "bounds": {
+                "x": element.x,
+                "y": element.y,
+                "width": element.width,
+                "height": element.height,
+            },
+        }
+        if dry_run:
+            typer.echo(json.dumps(payload, indent=2))
+            return
+
+        direct_type = getattr(windows_accessibility, "type_into_matching_element", None)
+        if direct_type is not None:
+            element = direct_type(
+                app_name,
+                contains=contains,
+                text=text,
+                control_type=control_type,
+                max_depth=max_depth,
+                index=index,
+                replace=replace,
+                interval=interval,
+            )
+            x, y = _element_center(element)
+            payload = {
+                "path": element.path,
+                "label": element.label,
+                "class_name": element.class_name,
+                "x": round(x, 2),
+                "y": round(y, 2),
+                "text": text,
+                "replace": replace,
+            }
+        else:
+            payload = _type_into_element(
+                adapter=_create_action_adapter(),
+                element=element,
+                text=text,
+                replace=replace,
+                interval=interval,
+            )
+        payload["automation_id"] = element.automation_id
+    except Exception as exc:
+        typer.echo(f"uia-type failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
     typer.echo(json.dumps(payload, indent=2))

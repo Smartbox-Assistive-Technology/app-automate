@@ -461,3 +461,131 @@ def test_uia_click_dry_run(monkeypatch) -> None:
     assert '"label": "Insert"' in result.stdout
     assert '"automation_id": "insertButton"' in result.stdout
     assert '"x": 330.0' in result.stdout
+
+
+def test_uia_type_dry_run(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli,
+            find_matching_elements=lambda *args, **kwargs: [
+                UIAElement(
+                    path="window[1] > child[1]",
+                    class_name="EditControl",
+                    role="edit",
+                    subrole="Edit",
+                    description="Subject",
+                    title=None,
+                    name="Subject",
+                    automation_id="subjectField",
+                    x=400,
+                    y=120,
+                    width=300,
+                    height=24,
+                    enabled=True,
+                    depth=1,
+                    child_count=0,
+                )
+            ]
+        ),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "uia-type",
+            "--app",
+            "Outlook",
+            "--contains",
+            "Subject",
+            "--text",
+            "Hello world",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"automation_id": "subjectField"' in result.stdout
+    assert '"text": "Hello world"' in result.stdout
+
+
+def test_uia_type_executes(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class FakeAdapter:
+        def click(self, x: float, y: float) -> None:
+            calls.append(("click", (x, y)))
+
+        def right_click(self, x: float, y: float) -> None:
+            raise AssertionError("unexpected right_click")
+
+        def double_click(self, x: float, y: float) -> None:
+            raise AssertionError("unexpected double_click")
+
+        def scroll(self, x: float, y: float, clicks: int) -> None:
+            raise AssertionError("unexpected scroll")
+
+        def drag(
+            self,
+            start_x: float,
+            start_y: float,
+            end_x: float,
+            end_y: float,
+            *,
+            duration: float = 0.2,
+            button: str = "left",
+        ) -> None:
+            raise AssertionError("unexpected drag")
+
+        def write_text(self, text: str, *, interval: float = 0.0) -> None:
+            calls.append(("write_text", (text, interval)))
+
+        def hotkey(self, *keys: str) -> None:
+            calls.append(("hotkey", keys))
+
+    monkeypatch.setattr(
+        cli,
+        "_load_windows_accessibility",
+        lambda: SimpleNamespace(
+            find_matching_elements=lambda *args, **kwargs: [
+                UIAElement(
+                    path="window[1] > child[1]",
+                    class_name="EditControl",
+                    role="edit",
+                    subrole="Edit",
+                    description="Subject",
+                    title=None,
+                    name="Subject",
+                    automation_id="subjectField",
+                    x=400,
+                    y=120,
+                    width=300,
+                    height=24,
+                    enabled=True,
+                    depth=1,
+                    child_count=0,
+                )
+            ]
+        ),
+    )
+    monkeypatch.setattr(cli, "_create_action_adapter", lambda: FakeAdapter())
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--app",
+            "Outlook",
+            "--contains",
+            "Subject",
+            "--text",
+            "Hello world",
+            "--replace",
+            "--execute",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [
+        ("click", (550.0, 132.0)),
+        ("hotkey", ("ctrl", "a")),
+        ("hotkey", ("backspace",)),
+        ("write_text", ("Hello world", 0.0)),
+    ]

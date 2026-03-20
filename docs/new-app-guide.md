@@ -113,3 +113,7 @@ When the Windows adapter work starts, the process should stay similar:
 - fall back to the visual profile flow when UIA is missing, incomplete, or badly labelled
 
 That means this training guide should still matter on Windows, especially for non-UIA apps.
+
+For a live semantic Windows example, see:
+
+- `examples/profiles/outlook-windows-classic/README.md`
