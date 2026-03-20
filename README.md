@@ -244,3 +244,4 @@ Runtime capture uses `mss`, which reports logical display coordinates on this Ma
 - [Architecture](/Users/willwade/GitHub/app-automate/docs/architecture.md)
 - [MVP Roadmap](/Users/willwade/GitHub/app-automate/docs/mvp-roadmap.md)
 - [New App Guide](/Users/willwade/GitHub/app-automate/docs/new-app-guide.md)
+- [Windows Integration](/Users/willwade/GitHub/app-automate/docs/windows-integration.md)
