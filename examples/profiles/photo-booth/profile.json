@@ -1,0 +1,81 @@
+{
+  "profile_id": "photo-booth",
+  "app_name": "Photo Booth",
+  "platform_hint": "macos",
+  "notes": "Captured from the live Photo Booth window on macOS. This baseline assumes the current photo mode layout and may need retraining if the window is resized significantly or the active capture mode changes.",
+  "baseline": {
+    "width": 720,
+    "height": 572
+  },
+  "anchors": {
+    "primary": {
+      "id": "titlebar_top_left",
+      "path": "anchor_primary.png",
+      "x": 0,
+      "y": 0,
+      "confidence_threshold": 0.9
+    },
+    "secondary": {
+      "id": "effects_button_bottom_right",
+      "path": "anchor_secondary.png",
+      "x": 607,
+      "y": 529,
+      "confidence_threshold": 0.88
+    }
+  },
+  "elements": {
+    "shutter_btn": {
+      "label": "Shutter",
+      "aliases": [
+        "take photo",
+        "capture",
+        "snap"
+      ],
+      "rel_x": 359.7,
+      "rel_y": 540.7,
+      "layout": "center_scaled",
+      "action": "click"
+    },
+    "effects_btn": {
+      "label": "Effects",
+      "aliases": [
+        "open effects"
+      ],
+      "rel_x": 48.5,
+      "rel_y": 16,
+      "layout": "bottom_right",
+      "action": "click"
+    },
+    "four_up_mode_btn": {
+      "label": "Four-up mode",
+      "aliases": [
+        "grid mode",
+        "four photos"
+      ],
+      "rel_x": 33.5,
+      "rel_y": 541.5,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    "photo_mode_btn": {
+      "label": "Photo mode",
+      "aliases": [
+        "single photo"
+      ],
+      "rel_x": 66.75,
+      "rel_y": 541.75,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    "video_mode_btn": {
+      "label": "Video mode",
+      "aliases": [
+        "record video"
+      ],
+      "rel_x": 100,
+      "rel_y": 541.5,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    }
+  }
+}

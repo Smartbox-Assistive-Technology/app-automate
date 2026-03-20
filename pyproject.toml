@@ -1,0 +1,45 @@
+[project]
+name = "app-automate"
+version = "0.1.0"
+description = "Accessibility-oriented app automation with LLM-built profiles and CV runtime."
+readme = "README.md"
+authors = [
+    { name = "will wade", email = "willwade@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "llm>=0.29",
+    "mss>=10.1.0",
+    "opencv-python>=4.13.0.92",
+    "pillow>=12.1.1",
+    "pyautogui>=0.9.54",
+    "pydantic>=2.12.5",
+    "typer>=0.24.1",
+]
+
+[project.scripts]
+app-automate = "app_automate.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.15.7",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["uv_build>=0.9.27,<0.10.0"]
+build-backend = "uv_build"

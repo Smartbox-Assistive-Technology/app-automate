@@ -1,0 +1,97 @@
+{
+  "app_name": "Photo Booth",
+  "notes": "Identified stable interaction map with tighter anchors.",
+  "primary_anchor": {
+    "id": "photo_booth_title",
+    "crop_box": {
+      "x": 0,
+      "y": 0,
+      "width": 120,
+      "height": 40
+    }
+  },
+  "secondary_anchor": null,
+  "elements": [
+    {
+      "id": "space_alien_effect",
+      "label": "Space Alien",
+      "aliases": [],
+      "x": 60,
+      "y": 180,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    {
+      "id": "nose_twirl_effect",
+      "label": "Nose Twirl",
+      "aliases": [],
+      "x": 180,
+      "y": 180,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    {
+      "id": "chipmunk_effect",
+      "label": "Chipmunk",
+      "aliases": [],
+      "x": 300,
+      "y": 180,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    {
+      "id": "lovestruck_effect",
+      "label": "Lovestruck",
+      "aliases": [],
+      "x": 60,
+      "y": 300,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    {
+      "id": "normal_effect",
+      "label": "Normal",
+      "aliases": [],
+      "x": 180,
+      "y": 300,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    {
+      "id": "dizzy_effect",
+      "label": "Dizzy",
+      "aliases": [],
+      "x": 300,
+      "y": 300,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    {
+      "id": "block_effect",
+      "label": "Block",
+      "aliases": [],
+      "x": 60,
+      "y": 420,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    {
+      "id": "bug_effect",
+      "label": "Bug",
+      "aliases": [],
+      "x": 180,
+      "y": 420,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    {
+      "id": "frog_effect",
+      "label": "Frog",
+      "aliases": [],
+      "x": 300,
+      "y": 420,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    }
+  ]
+}

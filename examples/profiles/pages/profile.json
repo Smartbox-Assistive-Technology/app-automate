@@ -1,0 +1,52 @@
+{
+  "profile_id": "pages",
+  "app_name": "Pages",
+  "platform_hint": "macos",
+  "notes": "",
+  "baseline": {
+    "width": 1031,
+    "height": 883
+  },
+  "anchors": {
+    "primary": {
+      "id": "toolbar_icon_style",
+      "path": "anchor_primary.png",
+      "x": 140.0,
+      "y": 10.0,
+      "confidence_threshold": 0.85
+    },
+    "secondary": null
+  },
+  "elements": {
+    "toolbar_icon_save": {
+      "label": "Save",
+      "aliases": [
+        "Save Document"
+      ],
+      "rel_x": -110.0,
+      "rel_y": 10.0,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    "toolbar_icon_format": {
+      "label": "Format",
+      "aliases": [
+        "Text Format"
+      ],
+      "rel_x": -50.0,
+      "rel_y": 10.0,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    },
+    "toolbar_icon_style": {
+      "label": "Style",
+      "aliases": [
+        "Text Style"
+      ],
+      "rel_x": 10.0,
+      "rel_y": 10.0,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    }
+  }
+}

@@ -1,0 +1,4 @@
+1 validation error for MappingResult
+elements.2.layout
+  Input should be 'fixed_from_primary', 'top_right', 'bottom_right' or 'center_scaled' [type=enum, input_value='bottom_left', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.12/v/enum

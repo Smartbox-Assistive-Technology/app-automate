@@ -1,0 +1,4 @@
+{
+  "prompt": "You are identifying a stable interaction map for an application UI.\n\nGrid image: grid.png\n\nTasks:\n1. Identify visible interactable elements.\n2. For each element, return: id, label, aliases, grid cell, rel_x, rel_y, layout mode, and action.\n3. Propose one stable primary anchor and one optional secondary anchor.\n4. Prefer anchors that are visually unique and unlikely to move.\n5. Mark controls near the top-right as top_right, bottom-right as bottom_right, and scalable center content as center_scaled.\n\nOutput JSON only.",
+  "image_path": "examples/profiles/photo-booth/grid.png"
+}

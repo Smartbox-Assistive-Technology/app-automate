@@ -1,0 +1,59 @@
+{
+  "profile_id": "camera-demo",
+  "app_name": "Camera Demo",
+  "platform_hint": "macos",
+  "notes": "Example profile for CLI and transform scaffolding.",
+  "baseline": {
+    "width": 1440,
+    "height": 900
+  },
+  "anchors": {
+    "primary": {
+      "id": "window_logo_top_left",
+      "path": "anchor_primary.png",
+      "x": 100,
+      "y": 150,
+      "confidence_threshold": 0.88
+    },
+    "secondary": {
+      "id": "resize_handle_bottom_right",
+      "path": "anchor_secondary.png",
+      "x": 1320,
+      "y": 860,
+      "confidence_threshold": 0.84
+    }
+  },
+  "elements": {
+    "shutter_btn": {
+      "label": "Shutter",
+      "aliases": [
+        "record",
+        "capture"
+      ],
+      "rel_x": 450,
+      "rel_y": 200,
+      "layout": "center_scaled",
+      "action": "click"
+    },
+    "iso_dropdown": {
+      "label": "ISO",
+      "aliases": [
+        "iso menu"
+      ],
+      "rel_x": -50,
+      "rel_y": 100,
+      "layout": "top_right",
+      "action": "click"
+    },
+    "library_tab": {
+      "label": "Library",
+      "aliases": [
+        "media"
+      ],
+      "rel_x": 40,
+      "rel_y": 72,
+      "layout": "fixed_from_primary",
+      "action": "click"
+    }
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "primary_candidates": [
+    {
+      "anchor_id": "toolbar_icon_style",
+      "crop_box": {
+        "x": 140,
+        "y": 10,
+        "width": 40,
+        "height": 40
+      },
+      "confidence": 1.0,
+      "second_best_confidence": 0.6732,
+      "uniqueness_gap": 0.3268,
+      "candidate_count": 1,
+      "texture_score": 0.5099,
+      "edge_density": 0.2781,
+      "quality_score": 64.32,
+      "valid": true,
+      "reason": ""
+    },
+    {
+      "anchor_id": "toolbar_icon_save",
+      "crop_box": {
+        "x": 20,
+        "y": 10,
+        "width": 40,
+        "height": 40
+      },
+      "confidence": 1.0,
+      "second_best_confidence": 0.7059,
+      "uniqueness_gap": 0.2941,
+      "candidate_count": 1,
+      "texture_score": 0.4044,
+      "edge_density": 0.2937,
+      "quality_score": 62.28,
+      "valid": true,
+      "reason": ""
+    },
+    {
+      "anchor_id": "toolbar_icon_format",
+      "crop_box": {
+        "x": 80,
+        "y": 10,
+        "width": 40,
+        "height": 40
+      },
+      "confidence": 1.0,
+      "second_best_confidence": 0.8112,
+      "uniqueness_gap": 0.1888,
+      "candidate_count": 1,
+      "texture_score": 0.4142,
+      "edge_density": 0.1844,
+      "quality_score": 57.59,
+      "valid": true,
+      "reason": ""
+    }
+  ],
+  "selected_primary": {
+    "anchor_id": "toolbar_icon_style",
+    "crop_box": {
+      "x": 140,
+      "y": 10,
+      "width": 40,
+      "height": 40
+    },
+    "confidence": 1.0,
+    "second_best_confidence": 0.6732,
+    "uniqueness_gap": 0.3268,
+    "candidate_count": 1,
+    "texture_score": 0.5099,
+    "edge_density": 0.2781,
+    "quality_score": 64.32,
+    "valid": true,
+    "reason": ""
+  },
+  "secondary_candidates": [],
+  "selected_secondary": null
+}

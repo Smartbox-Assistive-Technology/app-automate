@@ -1,0 +1,4 @@
+1 validation error for MappingResult
+elements
+  Field required [type=missing, input_value={'app_name': 'Photo Booth..._anchor_candidates': []}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing

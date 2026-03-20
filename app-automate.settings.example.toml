@@ -1,0 +1,11 @@
+[llm]
+model = "gpt-4o-mini"
+api_key = "replace-me"
+temperature = 0.0
+max_attempts = 2
+# max_tokens = 2000
+# system_prompt = "You are a UI mapping assistant."
+
+[builder]
+grid_size = 120
+anchor_confidence_threshold = 0.85

@@ -1,0 +1,746 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Annotated, Literal
+
+import typer
+
+from app_automate.accessibility.macos_ax import (
+    find_matching_elements,
+    list_app_ui_elements,
+)
+from app_automate.adapters.pyautogui_adapter import PyAutoGuiAdapter
+from app_automate.builder.models import CropBox
+from app_automate.builder.training import (
+    create_training_bundle,
+    rebuild_profile_with_anchor_overrides,
+)
+from app_automate.config.validation import load_profile
+from app_automate.debug.inspect import describe_profile
+from app_automate.debug.overlay import crop_window_overlay, draw_runtime_overlay
+from app_automate.runner.actions import click_resolved_command
+from app_automate.runner.runtime import (
+    RuntimeContext,
+    detect_runtime_context,
+    dry_run_command,
+    summarize_detected_anchors,
+)
+
+app = typer.Typer(
+    help=(
+        "App Automate builds app-specific UI maps and executes actions using "
+        "saved profiles and local computer vision."
+    )
+)
+
+
+def _profile_path(profile: Path) -> Path:
+    if profile.is_dir():
+        return profile / "profile.json"
+    return profile
+
+
+def _runtime_context(
+    *,
+    profile: Path,
+    primary_x: float | None,
+    primary_y: float | None,
+    secondary_x: float | None,
+    secondary_y: float | None,
+    screenshot: Path | None = None,
+) -> RuntimeContext:
+    profile_json_path = _profile_path(profile)
+    loaded = load_profile(profile_json_path)
+
+    if primary_x is not None or primary_y is not None:
+        if primary_x is None or primary_y is None:
+            raise typer.BadParameter(
+                "--primary-x and --primary-y must be supplied together"
+            )
+        if (secondary_x is None) ^ (secondary_y is None):
+            raise typer.BadParameter(
+                "--secondary-x and --secondary-y must be supplied together"
+            )
+        return RuntimeContext(
+            profile=loaded,
+            live_primary=(primary_x, primary_y),
+            live_secondary=(
+                (secondary_x, secondary_y)
+                if secondary_x is not None and secondary_y is not None
+                else None
+            ),
+            screenshot_path=screenshot,
+        )
+
+    return detect_runtime_context(
+        profile=loaded,
+        profile_dir=profile_json_path.parent,
+        screenshot_path=screenshot,
+    )
+
+
+def _create_action_adapter() -> PyAutoGuiAdapter:
+    return PyAutoGuiAdapter()
+
+
+def _write_debug_outputs(
+    *,
+    context: RuntimeContext,
+    result,
+    output_dir: Path,
+) -> tuple[Path, Path | None]:
+    if context.screenshot_path is None:
+        raise RuntimeError(
+            "debug output requires a screenshot path in the runtime context"
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    overlay_path = output_dir / "target-overlay.png"
+    draw_runtime_overlay(
+        context.screenshot_path,
+        overlay_path,
+        context=context,
+        result=result,
+    )
+
+    window_path = None
+    try:
+        window_path = output_dir / "window-crop.png"
+        crop_window_overlay(
+            context.screenshot_path,
+            window_path,
+            context=context,
+        )
+    except Exception:
+        window_path = None
+
+    return overlay_path, window_path
+
+
+def _format_ax_elements(elements: list) -> str:
+    lines = []
+    for element in elements:
+        indent = "  " * element.depth
+        bounds = (
+            f"{element.x},{element.y} {element.width}x{element.height}"
+            if None not in {element.x, element.y, element.width, element.height}
+            else "unknown"
+        )
+        status = "enabled" if element.enabled else "disabled"
+        lines.append(
+            f"{indent}{element.class_name}: {element.label} "
+            f"[{bounds}] ({status}, children={element.child_count})"
+        )
+    return "\n".join(lines)
+
+
+def _element_center(element) -> tuple[float, float]:
+    if None in {element.x, element.y, element.width, element.height}:
+        raise RuntimeError(f"element has no usable bounds: {element.path}")
+    return (
+        element.x + (element.width / 2.0),
+        element.y + (element.height / 2.0),
+    )
+
+
+def _select_ax_element(
+    *,
+    app_name: str,
+    contains: str,
+    max_depth: int,
+    index: int,
+) -> object:
+    matches = find_matching_elements(
+        app_name,
+        contains=contains,
+        max_depth=max_depth,
+        actionable_only=True,
+        enabled_only=True,
+    )
+    if not matches:
+        raise RuntimeError(f'no accessible elements matched "{contains}" in {app_name}')
+    if index < 1 or index > len(matches):
+        raise RuntimeError(
+            f"match index {index} is out of range; found {len(matches)} matches"
+        )
+    return matches[index - 1]
+
+
+def _run_ax_action(
+    *,
+    adapter: PyAutoGuiAdapter,
+    element,
+    action: str,
+    drag_dx: float,
+    drag_dy: float,
+    scroll_clicks: int,
+) -> dict[str, object]:
+    x, y = _element_center(element)
+    payload = {
+        "path": element.path,
+        "label": element.label,
+        "class_name": element.class_name,
+        "x": round(x, 2),
+        "y": round(y, 2),
+        "action": action,
+    }
+
+    if action == "click":
+        adapter.click(x, y)
+    elif action == "right-click":
+        adapter.right_click(x, y)
+    elif action == "double-click":
+        adapter.double_click(x, y)
+    elif action == "scroll":
+        if scroll_clicks == 0:
+            raise RuntimeError("--scroll-clicks must be non-zero for scroll")
+        adapter.scroll(x, y, scroll_clicks)
+        payload["scroll_clicks"] = scroll_clicks
+    elif action == "drag":
+        if drag_dx == 0 and drag_dy == 0:
+            raise RuntimeError("--drag-dx or --drag-dy must be non-zero for drag")
+        end_x = x + drag_dx
+        end_y = y + drag_dy
+        adapter.drag(x, y, end_x, end_y)
+        payload["end_x"] = round(end_x, 2)
+        payload["end_y"] = round(end_y, 2)
+    else:
+        raise RuntimeError(f"unsupported AX action: {action}")
+
+    return payload
+
+
+def _parse_crop_box(raw: str) -> CropBox:
+    parts = [part.strip() for part in raw.split(",")]
+    if len(parts) != 4:
+        raise typer.BadParameter("crop box must be x,y,width,height")
+    try:
+        x, y, width, height = [int(part) for part in parts]
+    except ValueError as exc:
+        raise typer.BadParameter("crop box must contain integers") from exc
+    return CropBox(x=x, y=y, width=width, height=height)
+
+
+def _prompt_crop_box(label: str) -> CropBox | None:
+    raw = typer.prompt(
+        f"Enter replacement {label} crop as x,y,width,height (blank to keep current)",
+        default="",
+        show_default=False,
+    ).strip()
+    if not raw:
+        return None
+    return _parse_crop_box(raw)
+
+
+def _run_train_review(
+    *,
+    bundle,
+    output_dir: Path,
+    settings_path: Path | None,
+) -> None:
+    if bundle.review_path is None or bundle.review_image_path is None:
+        return
+
+    report = json.loads(bundle.review_path.read_text())
+    typer.echo(f"Saved anchor review: {bundle.review_path}")
+    typer.echo(f"Saved anchor review image: {bundle.review_image_path}")
+    typer.echo(
+        "Selected primary anchor: "
+        f"{report['selected_primary']['anchor_id']} "
+        f"(score {report['selected_primary']['quality_score']})"
+    )
+    selected_secondary = report.get("selected_secondary")
+    if selected_secondary is not None:
+        typer.echo(
+            "Selected secondary anchor: "
+            f"{selected_secondary['anchor_id']} "
+            f"(score {selected_secondary['quality_score']})"
+        )
+
+    if typer.confirm("Accept selected anchors?", default=True):
+        return
+
+    primary_crop = _prompt_crop_box("primary")
+    secondary_crop = None
+    if selected_secondary is not None:
+        secondary_crop = _prompt_crop_box("secondary")
+    profile_path, review_path, review_image_path = (
+        rebuild_profile_with_anchor_overrides(
+            screenshot_path=bundle.screenshot_path,
+            output_dir=output_dir,
+            settings_path=settings_path,
+            primary_crop=primary_crop,
+            secondary_crop=secondary_crop,
+        )
+    )
+    typer.echo(f"Updated profile: {profile_path}")
+    typer.echo(f"Updated anchor review: {review_path}")
+    typer.echo(f"Updated anchor review image: {review_image_path}")
+
+
+@app.command("train")
+def train(
+    screenshot: Annotated[
+        Path | None,
+        typer.Option(
+            "--screenshot",
+            help=(
+                "Optional path to an existing screenshot. Captures the main "
+                "display if omitted."
+            ),
+        ),
+    ] = None,
+    app_name: Annotated[
+        str | None,
+        typer.Option(
+            "--app",
+            help="Capture and crop the front window of a macOS app by name.",
+        ),
+    ] = None,
+    settings: Annotated[
+        Path | None,
+        typer.Option(
+            "--settings",
+            help="Path to app-automate settings TOML.",
+        ),
+    ] = None,
+    output_dir: Annotated[
+        Path,
+        typer.Option(
+            "--output-dir",
+            help="Directory for generated training assets.",
+        ),
+    ] = Path("examples/profiles/new-profile"),
+    grid_size: Annotated[
+        int | None,
+        typer.Option(
+            "--grid-size",
+            min=40,
+            help="Grid cell size in pixels for the numbered overlay.",
+        ),
+    ] = None,
+    run_llm: Annotated[
+        bool,
+        typer.Option(
+            "--run-llm/--skip-llm",
+            help="Call the configured LLM and save a generated profile.",
+        ),
+    ] = True,
+    review: Annotated[
+        bool,
+        typer.Option(
+            "--review/--no-review",
+            help="Prompt for manual anchor review after LLM training completes.",
+        ),
+    ] = False,
+) -> None:
+    try:
+        bundle = create_training_bundle(
+            output_dir=output_dir,
+            screenshot_path=screenshot,
+            app_name=app_name,
+            settings_path=settings,
+            grid_size=grid_size,
+            run_llm=run_llm,
+        )
+    except Exception as exc:
+        typer.echo(f"train failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Saved screenshot: {bundle.screenshot_path}")
+    typer.echo(f"Saved grid overlay: {bundle.grid_path}")
+    typer.echo(f"Saved prompt input: {bundle.prompt_path}")
+    if bundle.llm_output_path is not None:
+        typer.echo(f"Saved LLM output: {bundle.llm_output_path}")
+    if bundle.profile_path is not None:
+        typer.echo(f"Saved profile: {bundle.profile_path}")
+    if bundle.review_path is not None:
+        typer.echo(f"Saved anchor review: {bundle.review_path}")
+    if bundle.review_image_path is not None:
+        typer.echo(f"Saved anchor review image: {bundle.review_image_path}")
+    if review and run_llm:
+        _run_train_review(
+            bundle=bundle,
+            output_dir=output_dir,
+            settings_path=settings,
+        )
+
+
+@app.command("inspect")
+def inspect_profile(
+    profile: Annotated[
+        Path,
+        typer.Argument(help="Path to a profile directory or profile JSON file."),
+    ],
+) -> None:
+    loaded = load_profile(_profile_path(profile))
+    typer.echo(describe_profile(loaded))
+
+
+@app.command("ax-list")
+def ax_list(
+    app_name: Annotated[
+        str,
+        typer.Option("--app", help="macOS app name to inspect."),
+    ],
+    max_depth: Annotated[
+        int,
+        typer.Option("--max-depth", min=0, help="Maximum UI tree depth to inspect."),
+    ] = 3,
+    actionable_only: Annotated[
+        bool,
+        typer.Option(
+            "--actionable-only/--all",
+            help="Show only actionable controls such as buttons and fields.",
+        ),
+    ] = False,
+    contains: Annotated[
+        str | None,
+        typer.Option(
+            "--contains",
+            help="Filter by case-insensitive label/description substring.",
+        ),
+    ] = None,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json/--table", help="Emit JSON instead of a text table."),
+    ] = False,
+) -> None:
+    try:
+        elements = list_app_ui_elements(
+            app_name,
+            max_depth=max_depth,
+            actionable_only=actionable_only,
+        )
+    except Exception as exc:
+        typer.echo(f"ax-list failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    if contains is not None:
+        needle = contains.lower()
+        elements = [
+            element
+            for element in elements
+            if needle in element.label.lower()
+            or needle in (element.role or "").lower()
+            or needle in (element.subrole or "").lower()
+        ]
+
+    if as_json:
+        typer.echo(json.dumps([element.as_dict() for element in elements], indent=2))
+        return
+
+    typer.echo(_format_ax_elements(elements))
+
+
+@app.command("ax-click")
+def ax_click(
+    app_name: Annotated[
+        str,
+        typer.Option("--app", help="macOS app name to inspect."),
+    ],
+    contains: Annotated[
+        str,
+        typer.Option("--contains", help="Substring match for the target label."),
+    ],
+    action: Annotated[
+        Literal["click", "right-click", "double-click", "scroll", "drag"],
+        typer.Option(
+            "--action",
+            help="Semantic action to perform on the matched element.",
+        ),
+    ] = "click",
+    max_depth: Annotated[
+        int,
+        typer.Option("--max-depth", min=0, help="Maximum UI tree depth to inspect."),
+    ] = 3,
+    index: Annotated[
+        int,
+        typer.Option(
+            "--index",
+            min=1,
+            help="1-based match index when multiple accessible elements match.",
+        ),
+    ] = 1,
+    drag_dx: Annotated[
+        float,
+        typer.Option("--drag-dx", help="Drag delta in x for action=drag."),
+    ] = 0.0,
+    drag_dy: Annotated[
+        float,
+        typer.Option("--drag-dy", help="Drag delta in y for action=drag."),
+    ] = 0.0,
+    scroll_clicks: Annotated[
+        int,
+        typer.Option(
+            "--scroll-clicks",
+            help="Signed scroll delta for action=scroll.",
+        ),
+    ] = 0,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run/--execute",
+            help="Preview the AX target and action without sending input.",
+        ),
+    ] = True,
+) -> None:
+    try:
+        element = _select_ax_element(
+            app_name=app_name,
+            contains=contains,
+            max_depth=max_depth,
+            index=index,
+        )
+        x, y = _element_center(element)
+        payload = {
+            "path": element.path,
+            "label": element.label,
+            "class_name": element.class_name,
+            "action": action,
+            "x": round(x, 2),
+            "y": round(y, 2),
+            "bounds": {
+                "x": element.x,
+                "y": element.y,
+                "width": element.width,
+                "height": element.height,
+            },
+        }
+        if action == "drag":
+            payload["end_x"] = round(x + drag_dx, 2)
+            payload["end_y"] = round(y + drag_dy, 2)
+        if action == "scroll":
+            payload["scroll_clicks"] = scroll_clicks
+
+        if dry_run:
+            typer.echo(json.dumps(payload, indent=2))
+            return
+
+        payload = _run_ax_action(
+            adapter=_create_action_adapter(),
+            element=element,
+            action=action,
+            drag_dx=drag_dx,
+            drag_dy=drag_dy,
+            scroll_clicks=scroll_clicks,
+        )
+    except Exception as exc:
+        typer.echo(f"ax-click failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(json.dumps(payload, indent=2))
+
+
+@app.command("list-elements")
+def list_elements(
+    profile: Annotated[
+        Path,
+        typer.Argument(help="Path to a profile directory or profile JSON file."),
+    ],
+) -> None:
+    loaded = load_profile(_profile_path(profile))
+    for element_id, element in sorted(loaded.elements.items()):
+        typer.echo(f"{element_id}: {element.label} [{element.layout.value}]")
+
+
+@app.command("dry-run")
+def dry_run(
+    command: Annotated[
+        str,
+        typer.Argument(help="Natural language element name or alias."),
+    ],
+    profile: Annotated[
+        Path,
+        typer.Option(
+            "--profile", help="Path to a profile directory or profile JSON file."
+        ),
+    ] = Path("examples/profiles/camera-demo/profile.json"),
+    screenshot: Annotated[
+        Path | None,
+        typer.Option(
+            "--screenshot",
+            help="Optional full-screen screenshot path for anchor detection.",
+        ),
+    ] = None,
+    primary_x: Annotated[
+        float | None,
+        typer.Option("--primary-x", help="Live primary anchor x-coordinate."),
+    ] = None,
+    primary_y: Annotated[
+        float | None,
+        typer.Option("--primary-y", help="Live primary anchor y-coordinate."),
+    ] = None,
+    secondary_x: Annotated[
+        float | None,
+        typer.Option("--secondary-x", help="Live secondary anchor x-coordinate."),
+    ] = None,
+    secondary_y: Annotated[
+        float | None,
+        typer.Option("--secondary-y", help="Live secondary anchor y-coordinate."),
+    ] = None,
+) -> None:
+    context = _runtime_context(
+        profile=profile,
+        screenshot=screenshot,
+        primary_x=primary_x,
+        primary_y=primary_y,
+        secondary_x=secondary_x,
+        secondary_y=secondary_y,
+    )
+    result = dry_run_command(command, context)
+    typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
+
+
+@app.command("click")
+def click(
+    command: Annotated[
+        str,
+        typer.Argument(help="Natural language element name or alias."),
+    ],
+    profile: Annotated[
+        Path,
+        typer.Option(
+            "--profile", help="Path to a profile directory or profile JSON file."
+        ),
+    ] = Path("examples/profiles/camera-demo/profile.json"),
+    screenshot: Annotated[
+        Path | None,
+        typer.Option(
+            "--screenshot",
+            help="Optional full-screen screenshot path for anchor detection.",
+        ),
+    ] = None,
+    primary_x: Annotated[
+        float | None,
+        typer.Option("--primary-x", help="Live primary anchor x-coordinate."),
+    ] = None,
+    primary_y: Annotated[
+        float | None,
+        typer.Option("--primary-y", help="Live primary anchor y-coordinate."),
+    ] = None,
+    secondary_x: Annotated[
+        float | None,
+        typer.Option("--secondary-x", help="Live secondary anchor x-coordinate."),
+    ] = None,
+    secondary_y: Annotated[
+        float | None,
+        typer.Option("--secondary-y", help="Live secondary anchor y-coordinate."),
+    ] = None,
+) -> None:
+    context = _runtime_context(
+        profile=profile,
+        screenshot=screenshot,
+        primary_x=primary_x,
+        primary_y=primary_y,
+        secondary_x=secondary_x,
+        secondary_y=secondary_y,
+    )
+    result = dry_run_command(command, context)
+    adapter = _create_action_adapter()
+    click_resolved_command(adapter, result)
+    typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
+
+
+@app.command("locate-anchors")
+def locate_anchors(
+    profile: Annotated[
+        Path,
+        typer.Option(
+            "--profile", help="Path to a profile directory or profile JSON file."
+        ),
+    ] = Path("examples/profiles/camera-demo/profile.json"),
+    screenshot: Annotated[
+        Path | None,
+        typer.Option(
+            "--screenshot",
+            help=(
+                "Optional full-screen screenshot path. Captures the main "
+                "display if omitted."
+            ),
+        ),
+    ] = None,
+) -> None:
+    context = _runtime_context(
+        profile=profile,
+        screenshot=screenshot,
+        primary_x=None,
+        primary_y=None,
+        secondary_x=None,
+        secondary_y=None,
+    )
+    typer.echo(json.dumps(summarize_detected_anchors(context).model_dump(), indent=2))
+
+
+@app.command("debug-target")
+def debug_target(
+    command: Annotated[
+        str,
+        typer.Argument(help="Natural language element name or alias."),
+    ],
+    profile: Annotated[
+        Path,
+        typer.Option(
+            "--profile", help="Path to a profile directory or profile JSON file."
+        ),
+    ] = Path("examples/profiles/camera-demo/profile.json"),
+    screenshot: Annotated[
+        Path | None,
+        typer.Option(
+            "--screenshot",
+            help=(
+                "Optional full-screen screenshot path. Captures the main "
+                "display if omitted."
+            ),
+        ),
+    ] = None,
+    output_dir: Annotated[
+        Path,
+        typer.Option(
+            "--output-dir",
+            help="Directory for annotated debug images.",
+        ),
+    ] = Path("debug-output"),
+    primary_x: Annotated[
+        float | None,
+        typer.Option("--primary-x", help="Live primary anchor x-coordinate."),
+    ] = None,
+    primary_y: Annotated[
+        float | None,
+        typer.Option("--primary-y", help="Live primary anchor y-coordinate."),
+    ] = None,
+    secondary_x: Annotated[
+        float | None,
+        typer.Option("--secondary-x", help="Live secondary anchor x-coordinate."),
+    ] = None,
+    secondary_y: Annotated[
+        float | None,
+        typer.Option("--secondary-y", help="Live secondary anchor y-coordinate."),
+    ] = None,
+) -> None:
+    context = _runtime_context(
+        profile=profile,
+        screenshot=screenshot,
+        primary_x=primary_x,
+        primary_y=primary_y,
+        secondary_x=secondary_x,
+        secondary_y=secondary_y,
+    )
+    result = dry_run_command(command, context)
+    overlay_path, window_path = _write_debug_outputs(
+        context=context,
+        result=result,
+        output_dir=output_dir,
+    )
+
+    payload = {
+        "result": result.model_dump(mode="json"),
+        "overlay_path": str(overlay_path),
+        "window_path": str(window_path) if window_path is not None else None,
+        "anchors": summarize_detected_anchors(context).model_dump(mode="json"),
+    }
+    typer.echo(json.dumps(payload, indent=2))
+
+
+def main() -> None:
+    app()
