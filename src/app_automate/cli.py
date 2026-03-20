@@ -1,31 +1,15 @@
 from __future__ import annotations
 
 import json
+import platform
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import typer
 
-from app_automate.accessibility.macos_ax import (
-    find_matching_elements,
-    list_app_ui_elements,
-)
-from app_automate.adapters.pyautogui_adapter import PyAutoGuiAdapter
-from app_automate.builder.models import CropBox
-from app_automate.builder.training import (
-    create_training_bundle,
-    rebuild_profile_with_anchor_overrides,
-)
+from app_automate.accessibility.models import UIElement
+from app_automate.adapters.base import ActionAdapter
 from app_automate.config.validation import load_profile
-from app_automate.debug.inspect import describe_profile
-from app_automate.debug.overlay import crop_window_overlay, draw_runtime_overlay
-from app_automate.runner.actions import click_resolved_command
-from app_automate.runner.runtime import (
-    RuntimeContext,
-    detect_runtime_context,
-    dry_run_command,
-    summarize_detected_anchors,
-)
 
 app = typer.Typer(
     help=(
@@ -49,9 +33,10 @@ def _runtime_context(
     secondary_x: float | None,
     secondary_y: float | None,
     screenshot: Path | None = None,
-) -> RuntimeContext:
+) -> Any:
     profile_json_path = _profile_path(profile)
     loaded = load_profile(profile_json_path)
+    RuntimeContext, detect_runtime_context, _, _ = _load_runtime_api()
 
     if primary_x is not None or primary_y is not None:
         if primary_x is None or primary_y is None:
@@ -80,16 +65,78 @@ def _runtime_context(
     )
 
 
-def _create_action_adapter() -> PyAutoGuiAdapter:
+def _create_action_adapter() -> ActionAdapter:
+    if platform.system() == "Windows":
+        from app_automate.adapters.windows_input import WindowsInputAdapter
+
+        return WindowsInputAdapter()
+    from app_automate.adapters.pyautogui_adapter import PyAutoGuiAdapter
+
     return PyAutoGuiAdapter()
+
+
+def _load_macos_accessibility():
+    from app_automate.accessibility import macos_ax
+
+    return macos_ax
+
+
+def _load_windows_accessibility():
+    from app_automate.accessibility import windows_uia
+
+    return windows_uia
+
+
+def _load_training_api():
+    from app_automate.builder.training import (
+        create_training_bundle,
+        rebuild_profile_with_anchor_overrides,
+    )
+
+    return create_training_bundle, rebuild_profile_with_anchor_overrides
+
+
+def _load_runtime_api():
+    from app_automate.runner.runtime import (
+        RuntimeContext,
+        detect_runtime_context,
+        dry_run_command,
+        summarize_detected_anchors,
+    )
+
+    return (
+        RuntimeContext,
+        detect_runtime_context,
+        dry_run_command,
+        summarize_detected_anchors,
+    )
+
+
+def _load_profile_describer():
+    from app_automate.debug.inspect import describe_profile
+
+    return describe_profile
+
+
+def _load_debug_overlay_api():
+    from app_automate.debug.overlay import crop_window_overlay, draw_runtime_overlay
+
+    return crop_window_overlay, draw_runtime_overlay
+
+
+def _load_runner_actions():
+    from app_automate.runner.actions import click_resolved_command
+
+    return click_resolved_command
 
 
 def _write_debug_outputs(
     *,
-    context: RuntimeContext,
+    context: Any,
     result,
     output_dir: Path,
 ) -> tuple[Path, Path | None]:
+    crop_window_overlay, draw_runtime_overlay = _load_debug_overlay_api()
     if context.screenshot_path is None:
         raise RuntimeError(
             "debug output requires a screenshot path in the runtime context"
@@ -118,7 +165,7 @@ def _write_debug_outputs(
     return overlay_path, window_path
 
 
-def _format_ax_elements(elements: list) -> str:
+def _format_semantic_elements(elements: list[UIElement]) -> str:
     lines = []
     for element in elements:
         indent = "  " * element.depth
@@ -144,20 +191,24 @@ def _element_center(element) -> tuple[float, float]:
     )
 
 
-def _select_ax_element(
+def _select_semantic_element(
     *,
+    finder,
     app_name: str,
     contains: str,
     max_depth: int,
     index: int,
+    control_type: str | None = None,
 ) -> object:
-    matches = find_matching_elements(
-        app_name,
-        contains=contains,
-        max_depth=max_depth,
-        actionable_only=True,
-        enabled_only=True,
-    )
+    query_kwargs = {
+        "contains": contains,
+        "max_depth": max_depth,
+        "actionable_only": True,
+        "enabled_only": True,
+    }
+    if control_type is not None:
+        query_kwargs["control_type"] = control_type
+    matches = finder(app_name, **query_kwargs)
     if not matches:
         raise RuntimeError(f'no accessible elements matched "{contains}" in {app_name}')
     if index < 1 or index > len(matches):
@@ -169,7 +220,7 @@ def _select_ax_element(
 
 def _run_ax_action(
     *,
-    adapter: PyAutoGuiAdapter,
+    adapter: ActionAdapter,
     element,
     action: str,
     drag_dx: float,
@@ -211,7 +262,9 @@ def _run_ax_action(
     return payload
 
 
-def _parse_crop_box(raw: str) -> CropBox:
+def _parse_crop_box(raw: str) -> Any:
+    from app_automate.builder.models import CropBox
+
     parts = [part.strip() for part in raw.split(",")]
     if len(parts) != 4:
         raise typer.BadParameter("crop box must be x,y,width,height")
@@ -222,7 +275,7 @@ def _parse_crop_box(raw: str) -> CropBox:
     return CropBox(x=x, y=y, width=width, height=height)
 
 
-def _prompt_crop_box(label: str) -> CropBox | None:
+def _prompt_crop_box(label: str) -> Any | None:
     raw = typer.prompt(
         f"Enter replacement {label} crop as x,y,width,height (blank to keep current)",
         default="",
@@ -239,6 +292,7 @@ def _run_train_review(
     output_dir: Path,
     settings_path: Path | None,
 ) -> None:
+    _, rebuild_profile_with_anchor_overrides = _load_training_api()
     if bundle.review_path is None or bundle.review_image_path is None:
         return
 
@@ -336,6 +390,7 @@ def train(
     ] = False,
 ) -> None:
     try:
+        create_training_bundle, _ = _load_training_api()
         bundle = create_training_bundle(
             output_dir=output_dir,
             screenshot_path=screenshot,
@@ -375,6 +430,7 @@ def inspect_profile(
     ],
 ) -> None:
     loaded = load_profile(_profile_path(profile))
+    describe_profile = _load_profile_describer()
     typer.echo(describe_profile(loaded))
 
 
@@ -408,7 +464,7 @@ def ax_list(
     ] = False,
 ) -> None:
     try:
-        elements = list_app_ui_elements(
+        elements = _load_macos_accessibility().list_app_ui_elements(
             app_name,
             max_depth=max_depth,
             actionable_only=actionable_only,
@@ -430,7 +486,7 @@ def ax_list(
         typer.echo(json.dumps([element.as_dict() for element in elements], indent=2))
         return
 
-    typer.echo(_format_ax_elements(elements))
+    typer.echo(_format_semantic_elements(elements))
 
 
 @app.command("ax-click")
@@ -486,7 +542,8 @@ def ax_click(
     ] = True,
 ) -> None:
     try:
-        element = _select_ax_element(
+        element = _select_semantic_element(
+            finder=_load_macos_accessibility().find_matching_elements,
             app_name=app_name,
             contains=contains,
             max_depth=max_depth,
@@ -527,6 +584,184 @@ def ax_click(
         )
     except Exception as exc:
         typer.echo(f"ax-click failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(json.dumps(payload, indent=2))
+
+
+@app.command("uia-list")
+def uia_list(
+    app_name: Annotated[
+        str,
+        typer.Option("--app", help="Windows app or window name to inspect."),
+    ],
+    max_depth: Annotated[
+        int,
+        typer.Option("--max-depth", min=0, help="Maximum UI tree depth to inspect."),
+    ] = 3,
+    actionable_only: Annotated[
+        bool,
+        typer.Option(
+            "--actionable-only/--all",
+            help="Show only actionable controls such as buttons and fields.",
+        ),
+    ] = False,
+    contains: Annotated[
+        str | None,
+        typer.Option(
+            "--contains",
+            help="Filter by case-insensitive label, role, or automation id.",
+        ),
+    ] = None,
+    control_type: Annotated[
+        str | None,
+        typer.Option(
+            "--control-type",
+            help="Filter by an exact UIA control type name.",
+        ),
+    ] = None,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json/--table", help="Emit JSON instead of a text table."),
+    ] = False,
+) -> None:
+    try:
+        elements = _load_windows_accessibility().list_app_ui_elements(
+            app_name,
+            max_depth=max_depth,
+            actionable_only=actionable_only,
+        )
+    except Exception as exc:
+        typer.echo(f"uia-list failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if contains is not None:
+        needle = contains.lower()
+        elements = [
+            element
+            for element in elements
+            if needle in element.label.lower()
+            or needle in (element.role or "").lower()
+            or needle in (element.subrole or "").lower()
+            or needle in (element.automation_id or "").lower()
+        ]
+    if control_type is not None:
+        elements = [
+            element for element in elements if element.class_name == control_type
+        ]
+
+    if as_json:
+        typer.echo(json.dumps([element.as_dict() for element in elements], indent=2))
+        return
+
+    typer.echo(_format_semantic_elements(elements))
+
+
+@app.command("uia-click")
+def uia_click(
+    app_name: Annotated[
+        str,
+        typer.Option("--app", help="Windows app or window name to inspect."),
+    ],
+    contains: Annotated[
+        str,
+        typer.Option("--contains", help="Substring match for the target label."),
+    ],
+    action: Annotated[
+        Literal["click", "right-click", "double-click", "scroll", "drag"],
+        typer.Option(
+            "--action",
+            help="Semantic action to perform on the matched element.",
+        ),
+    ] = "click",
+    max_depth: Annotated[
+        int,
+        typer.Option("--max-depth", min=0, help="Maximum UI tree depth to inspect."),
+    ] = 3,
+    index: Annotated[
+        int,
+        typer.Option(
+            "--index",
+            min=1,
+            help="1-based match index when multiple accessible elements match.",
+        ),
+    ] = 1,
+    control_type: Annotated[
+        str | None,
+        typer.Option(
+            "--control-type",
+            help="Require an exact UIA control type name match.",
+        ),
+    ] = None,
+    drag_dx: Annotated[
+        float,
+        typer.Option("--drag-dx", help="Drag delta in x for action=drag."),
+    ] = 0.0,
+    drag_dy: Annotated[
+        float,
+        typer.Option("--drag-dy", help="Drag delta in y for action=drag."),
+    ] = 0.0,
+    scroll_clicks: Annotated[
+        int,
+        typer.Option(
+            "--scroll-clicks",
+            help="Signed scroll delta for action=scroll.",
+        ),
+    ] = 0,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run/--execute",
+            help="Preview the UIA target and action without sending input.",
+        ),
+    ] = True,
+) -> None:
+    try:
+        element = _select_semantic_element(
+            finder=_load_windows_accessibility().find_matching_elements,
+            app_name=app_name,
+            contains=contains,
+            control_type=control_type,
+            max_depth=max_depth,
+            index=index,
+        )
+        x, y = _element_center(element)
+        payload = {
+            "path": element.path,
+            "label": element.label,
+            "class_name": element.class_name,
+            "automation_id": element.automation_id,
+            "action": action,
+            "x": round(x, 2),
+            "y": round(y, 2),
+            "bounds": {
+                "x": element.x,
+                "y": element.y,
+                "width": element.width,
+                "height": element.height,
+            },
+        }
+        if action == "drag":
+            payload["end_x"] = round(x + drag_dx, 2)
+            payload["end_y"] = round(y + drag_dy, 2)
+        if action == "scroll":
+            payload["scroll_clicks"] = scroll_clicks
+
+        if dry_run:
+            typer.echo(json.dumps(payload, indent=2))
+            return
+
+        payload = _run_ax_action(
+            adapter=_create_action_adapter(),
+            element=element,
+            action=action,
+            drag_dx=drag_dx,
+            drag_dy=drag_dy,
+            scroll_clicks=scroll_clicks,
+        )
+        payload["automation_id"] = element.automation_id
+    except Exception as exc:
+        typer.echo(f"uia-click failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
     typer.echo(json.dumps(payload, indent=2))
@@ -588,6 +823,7 @@ def dry_run(
         secondary_x=secondary_x,
         secondary_y=secondary_y,
     )
+    _, _, dry_run_command, _ = _load_runtime_api()
     result = dry_run_command(command, context)
     typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
 
@@ -636,8 +872,10 @@ def click(
         secondary_x=secondary_x,
         secondary_y=secondary_y,
     )
+    _, _, dry_run_command, _ = _load_runtime_api()
     result = dry_run_command(command, context)
     adapter = _create_action_adapter()
+    click_resolved_command = _load_runner_actions()
     click_resolved_command(adapter, result)
     typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
 
@@ -669,6 +907,7 @@ def locate_anchors(
         secondary_x=None,
         secondary_y=None,
     )
+    _, _, _, summarize_detected_anchors = _load_runtime_api()
     typer.echo(json.dumps(summarize_detected_anchors(context).model_dump(), indent=2))
 
 
@@ -726,6 +965,7 @@ def debug_target(
         secondary_x=secondary_x,
         secondary_y=secondary_y,
     )
+    _, _, dry_run_command, summarize_detected_anchors = _load_runtime_api()
     result = dry_run_command(command, context)
     overlay_path, window_path = _write_debug_outputs(
         context=context,

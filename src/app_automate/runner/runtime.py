@@ -6,10 +6,8 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from app_automate.config.models import AppProfile
-from app_automate.runner.anchors import locate_anchor
 from app_automate.runner.resolver import resolve_element_position
 from app_automate.runner.transform import compute_transform
-from app_automate.vision.screenshots import capture_main_display_temp
 
 
 @dataclass(slots=True)
@@ -43,6 +41,9 @@ def detect_runtime_context(
     profile_dir: Path,
     screenshot_path: Path | None = None,
 ) -> RuntimeContext:
+    from app_automate.runner.anchors import locate_anchor
+    from app_automate.vision.screenshots import capture_main_display_temp
+
     active_screenshot = screenshot_path or capture_main_display_temp()
 
     primary_template = profile_dir / profile.anchors.primary.path

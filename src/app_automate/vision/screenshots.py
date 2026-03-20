@@ -4,11 +4,12 @@ import tempfile
 import uuid
 from pathlib import Path
 
-import mss
 from PIL import Image
 
 
 def capture_main_display(output_path: Path) -> Path:
+    import mss
+
     with mss.mss() as sct:
         monitor = sct.monitors[1]
         raw = sct.grab(monitor)

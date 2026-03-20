@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import cv2
 import numpy as np
 from pydantic import BaseModel
 
@@ -31,6 +30,7 @@ def match_template(
     *,
     threshold: float = 0.8,
 ) -> MatchResult:
+    cv2 = _import_cv2()
     screenshot = cv2.imread(str(screenshot_path))
     template = cv2.imread(str(template_path))
     if screenshot is None or template is None:
@@ -59,6 +59,7 @@ def match_template_stats(
     *,
     threshold: float,
 ) -> MatchStats:
+    cv2 = _import_cv2()
     screenshot = cv2.imread(str(screenshot_path))
     template = cv2.imread(str(template_path))
     if screenshot is None or template is None:
@@ -95,6 +96,7 @@ def _second_best_confidence(
     max_loc: tuple[int, int],
     template_shape: tuple[int, int, int],
 ) -> float:
+    cv2 = _import_cv2()
     result_copy = result.copy()
     template_height, template_width = template_shape[:2]
     left = max(max_loc[0] - max(template_width // 2, 1), 0)
@@ -107,11 +109,13 @@ def _second_best_confidence(
 
 
 def _texture_score(template: np.ndarray) -> float:
+    cv2 = _import_cv2()
     gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
     return min(float(np.std(gray)) / 64.0, 1.0)
 
 
 def _edge_density(template: np.ndarray) -> float:
+    cv2 = _import_cv2()
     gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 100, 200)
     return min(float(np.mean(edges > 0)) / 0.2, 1.0)
@@ -133,3 +137,9 @@ def _quality_score(
     ) * 100.0
     repeated_penalty = max(candidate_count - 1, 0) * 15.0
     return max(base - repeated_penalty, 0.0)
+
+
+def _import_cv2():
+    import cv2
+
+    return cv2

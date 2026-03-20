@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
 from app_automate import cli
 from app_automate.accessibility.macos_ax import AXElement
+from app_automate.accessibility.windows_uia import UIAElement
 
 runner = CliRunner()
 
@@ -23,13 +25,19 @@ def test_list_elements_command() -> None:
 
 
 def test_inspect_command() -> None:
-    result = runner.invoke(
-        cli.app,
-        [
-            "inspect",
-            str(Path("examples/profiles/camera-demo/profile.json")),
-        ],
-    )
+    cli_describe = cli._load_profile_describer
+    try:
+        cli._load_profile_describer = lambda: lambda loaded: "Profile: camera-demo"
+        result = runner.invoke(
+            cli.app,
+            [
+                "inspect",
+                str(Path("examples/profiles/camera-demo/profile.json")),
+            ],
+        )
+    finally:
+        cli._load_profile_describer = cli_describe
+
     assert result.exit_code == 0
     assert "Profile: camera-demo" in result.stdout
 
@@ -41,7 +49,42 @@ def test_click_command_uses_action_adapter(monkeypatch) -> None:
         def click(self, x: float, y: float) -> None:
             clicks.append((x, y))
 
+    class FakeResolvedCommand:
+        def model_dump(self, mode: str = "json") -> dict[str, object]:
+            return {
+                "element_id": "shutter_btn",
+                "label": "Capture",
+                "action": "click",
+                "x": 359.7,
+                "y": 540.7,
+                "layout": "fixed",
+            }
+
+    monkeypatch.setattr(
+        cli,
+        "_runtime_context",
+        lambda **_: SimpleNamespace(
+            profile=cli.load_profile(Path("examples/profiles/photo-booth/profile.json"))
+        ),
+    )
     monkeypatch.setattr(cli, "_create_action_adapter", lambda: FakeAdapter())
+    monkeypatch.setattr(
+        cli,
+        "_load_runtime_api",
+        lambda: (
+            None,
+            None,
+            lambda *args, **kwargs: FakeResolvedCommand(),
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_load_runner_actions",
+        lambda: lambda adapter, result: adapter.click(
+            result.model_dump()["x"], result.model_dump()["y"]
+        ),
+    )
 
     result = runner.invoke(
         cli.app,
@@ -70,15 +113,28 @@ def test_locate_anchors_command_uses_detected_context(monkeypatch) -> None:
     monkeypatch.setattr(
         cli,
         "_runtime_context",
-        lambda **_: cli.RuntimeContext(
-            profile=cli.load_profile(
-                Path("examples/profiles/photo-booth/profile.json")
-            ),
+        lambda **_: SimpleNamespace(
+            profile=cli.load_profile(Path("examples/profiles/photo-booth/profile.json")),
             live_primary=(522.0, 207.0),
             live_secondary=(1129.0, 736.0),
             screenshot_path=Path("/tmp/synthetic-screen.png"),
             primary_confidence=0.99,
             secondary_confidence=0.98,
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_load_runtime_api",
+        lambda: (
+            None,
+            None,
+            None,
+            lambda context: SimpleNamespace(
+                model_dump=lambda mode="json": {
+                    "screenshot_path": str(context.screenshot_path),
+                    "primary": {"x": context.live_primary[0]},
+                }
+            ),
         ),
     )
 
@@ -92,26 +148,42 @@ def test_locate_anchors_command_uses_detected_context(monkeypatch) -> None:
     )
 
     assert result.exit_code == 0
-    assert '"screenshot_path": "/tmp/synthetic-screen.png"' in result.stdout
+    assert '"screenshot_path": "\\\\tmp\\\\synthetic-screen.png"' in result.stdout
     assert '"x": 522.0' in result.stdout
 
 
-def test_debug_target_writes_overlay(monkeypatch, tmp_path: Path) -> None:
+def test_debug_target_writes_overlay(monkeypatch) -> None:
+    tmp_path = Path("test-output-debug")
+    tmp_path.mkdir(exist_ok=True)
     screenshot_path = tmp_path / "screen.png"
     screenshot_path.write_bytes(b"fake")
 
     monkeypatch.setattr(
         cli,
         "_runtime_context",
-        lambda **_: cli.RuntimeContext(
-            profile=cli.load_profile(
-                Path("examples/profiles/photo-booth/profile.json")
-            ),
+        lambda **_: SimpleNamespace(
+            profile=cli.load_profile(Path("examples/profiles/photo-booth/profile.json")),
             live_primary=(522.0, 207.0),
             live_secondary=(1129.0, 736.0),
             screenshot_path=screenshot_path,
             primary_confidence=0.99,
             secondary_confidence=0.98,
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_load_runtime_api",
+        lambda: (
+            None,
+            None,
+            lambda *args, **kwargs: SimpleNamespace(
+                model_dump=lambda mode="json": {"element_id": "effects"}
+            ),
+            lambda context: SimpleNamespace(
+                model_dump=lambda mode="json": {
+                    "screenshot_path": str(context.screenshot_path)
+                }
+            ),
         ),
     )
 
@@ -145,25 +217,27 @@ def test_debug_target_writes_overlay(monkeypatch, tmp_path: Path) -> None:
 def test_ax_list_outputs_json(monkeypatch) -> None:
     monkeypatch.setattr(
         cli,
-        "list_app_ui_elements",
-        lambda *args, **kwargs: [
-            AXElement(
-                path="front window > UI element 1",
-                class_name="button",
-                role="AXButton",
-                subrole=None,
-                description="Style",
-                title=None,
-                name=None,
-                x=140,
-                y=10,
-                width=40,
-                height=40,
-                enabled=True,
-                depth=1,
-                child_count=0,
-            )
-        ],
+        "_load_macos_accessibility",
+        lambda: SimpleNamespace(
+            list_app_ui_elements=lambda *args, **kwargs: [
+                AXElement(
+                    path="front window > UI element 1",
+                    class_name="button",
+                    role="AXButton",
+                    subrole=None,
+                    description="Style",
+                    title=None,
+                    name=None,
+                    x=140,
+                    y=10,
+                    width=40,
+                    height=40,
+                    enabled=True,
+                    depth=1,
+                    child_count=0,
+                )
+            ]
+        ),
     )
 
     result = runner.invoke(
@@ -184,25 +258,27 @@ def test_ax_list_outputs_json(monkeypatch) -> None:
 def test_ax_click_dry_run(monkeypatch) -> None:
     monkeypatch.setattr(
         cli,
-        "find_matching_elements",
-        lambda *args, **kwargs: [
-            AXElement(
-                path="front window > UI element 1",
-                class_name="menu button",
-                role="AXMenuButton",
-                subrole=None,
-                description="Insert",
-                title=None,
-                name=None,
-                x=367,
-                y=33,
-                width=41,
-                height=52,
-                enabled=True,
-                depth=1,
-                child_count=1,
-            )
-        ],
+        "_load_macos_accessibility",
+        lambda: SimpleNamespace(
+            find_matching_elements=lambda *args, **kwargs: [
+                AXElement(
+                    path="front window > UI element 1",
+                    class_name="menu button",
+                    role="AXMenuButton",
+                    subrole=None,
+                    description="Insert",
+                    title=None,
+                    name=None,
+                    x=367,
+                    y=33,
+                    width=41,
+                    height=52,
+                    enabled=True,
+                    depth=1,
+                    child_count=1,
+                )
+            ]
+        ),
     )
 
     result = runner.invoke(
@@ -253,25 +329,27 @@ def test_ax_click_executes_drag(monkeypatch) -> None:
 
     monkeypatch.setattr(
         cli,
-        "find_matching_elements",
-        lambda *args, **kwargs: [
-            AXElement(
-                path="front window > UI element 1",
-                class_name="button",
-                role="AXButton",
-                subrole=None,
-                description="Body",
-                title=None,
-                name=None,
-                x=802,
-                y=131,
-                width=221,
-                height=47,
-                enabled=True,
-                depth=1,
-                child_count=0,
-            )
-        ],
+        "_load_macos_accessibility",
+        lambda: SimpleNamespace(
+            find_matching_elements=lambda *args, **kwargs: [
+                AXElement(
+                    path="front window > UI element 1",
+                    class_name="button",
+                    role="AXButton",
+                    subrole=None,
+                    description="Body",
+                    title=None,
+                    name=None,
+                    x=802,
+                    y=131,
+                    width=221,
+                    height=47,
+                    enabled=True,
+                    depth=1,
+                    child_count=0,
+                )
+            ]
+        ),
     )
     monkeypatch.setattr(cli, "_create_action_adapter", lambda: FakeAdapter())
 
@@ -296,3 +374,90 @@ def test_ax_click_executes_drag(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == [(912.5, 154.5, 962.5, 154.5)]
     assert '"end_x": 962.5' in result.stdout
+
+
+def test_uia_list_outputs_json(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli,
+        "_load_windows_accessibility",
+        lambda: SimpleNamespace(
+            list_app_ui_elements=lambda *args, **kwargs: [
+                UIAElement(
+                    path="window[1] > child[1]",
+                    class_name="ButtonControl",
+                    role="button",
+                    subrole="Button",
+                    description="Open settings",
+                    title=None,
+                    name="Settings",
+                    automation_id="settingsButton",
+                    x=100,
+                    y=120,
+                    width=48,
+                    height=24,
+                    enabled=True,
+                    depth=1,
+                    child_count=0,
+                )
+            ]
+        ),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "uia-list",
+            "--app",
+            "Photos",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"class_name": "ButtonControl"' in result.stdout
+    assert '"automation_id": "settingsButton"' in result.stdout
+
+
+def test_uia_click_dry_run(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli,
+        "_load_windows_accessibility",
+        lambda: SimpleNamespace(
+            find_matching_elements=lambda *args, **kwargs: [
+                UIAElement(
+                    path="window[1] > child[1]",
+                    class_name="ButtonControl",
+                    role="button",
+                    subrole="Button",
+                    description="Insert",
+                    title=None,
+                    name="Insert",
+                    automation_id="insertButton",
+                    x=300,
+                    y=50,
+                    width=60,
+                    height=20,
+                    enabled=True,
+                    depth=1,
+                    child_count=0,
+                )
+            ]
+        ),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "uia-click",
+            "--app",
+            "Word",
+            "--contains",
+            "Insert",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"label": "Insert"' in result.stdout
+    assert '"automation_id": "insertButton"' in result.stdout
+    assert '"x": 330.0' in result.stdout

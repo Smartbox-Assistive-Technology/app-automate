@@ -9,9 +9,7 @@ from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
 
 from app_automate.builder.anchor_crop import crop_anchor
-from app_automate.builder.capture import ensure_screenshot
 from app_automate.builder.grid import render_grid_overlay
-from app_automate.builder.llm_mapper import prepare_mapping_request, run_mapping_llm
 from app_automate.builder.models import CropBox, MappingAnchor, MappingResult
 from app_automate.config.models import (
     AnchorDefinition,
@@ -23,7 +21,6 @@ from app_automate.config.models import (
 )
 from app_automate.config.settings import load_settings
 from app_automate.config.validation import save_profile
-from app_automate.vision.matching import match_template, match_template_stats
 
 
 class AnchorCandidateReview(BaseModel):
@@ -67,6 +64,9 @@ def create_training_bundle(
     grid_size: int | None = None,
     run_llm: bool = True,
 ) -> TrainingBundle:
+    from app_automate.builder.capture import ensure_screenshot
+    from app_automate.builder.llm_mapper import prepare_mapping_request
+
     output_dir.mkdir(parents=True, exist_ok=True)
     for path in output_dir.glob("mapping_output.attempt-*.json"):
         path.unlink(missing_ok=True)
@@ -154,6 +154,8 @@ def _generate_profile_with_retries(
     settings: Any,
     grid_size: int,
 ) -> tuple[MappingResult, str, AppProfile, AnchorReviewReport]:
+    from app_automate.builder.llm_mapper import run_mapping_llm
+
     feedback: str | None = None
     last_error: Exception | None = None
 
@@ -462,6 +464,8 @@ def _evaluate_anchor_candidate(
     image_height: int,
     threshold: float,
 ) -> AnchorCandidateReview:
+    from app_automate.vision.matching import match_template, match_template_stats
+
     try:
         _validate_crop_box(anchor.crop_box, image_width, image_height)
     except Exception as exc:

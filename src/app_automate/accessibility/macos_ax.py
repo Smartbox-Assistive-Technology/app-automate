@@ -4,7 +4,8 @@ import json
 import platform
 import subprocess
 import time
-from dataclasses import dataclass
+
+from app_automate.accessibility.models import UIElement
 
 ACTIONABLE_CLASSES = {
     "button",
@@ -16,53 +17,10 @@ ACTIONABLE_CLASSES = {
 }
 
 
-@dataclass(slots=True)
-class AXElement:
-    path: str
-    class_name: str
-    role: str | None
-    subrole: str | None
-    description: str | None
-    title: str | None
-    name: str | None
-    x: int | None
-    y: int | None
-    width: int | None
-    height: int | None
-    enabled: bool | None
-    depth: int
-    child_count: int
-
-    @property
-    def label(self) -> str:
-        for value in (self.title, self.name, self.description):
-            if value:
-                return value
-        return self.class_name
-
+class AXElement(UIElement):
     @property
     def actionable(self) -> bool:
         return self.class_name in ACTIONABLE_CLASSES
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "path": self.path,
-            "class_name": self.class_name,
-            "role": self.role,
-            "subrole": self.subrole,
-            "description": self.description,
-            "title": self.title,
-            "name": self.name,
-            "label": self.label,
-            "x": self.x,
-            "y": self.y,
-            "width": self.width,
-            "height": self.height,
-            "enabled": self.enabled,
-            "depth": self.depth,
-            "child_count": self.child_count,
-            "actionable": self.actionable,
-        }
 
 
 def list_app_ui_elements(

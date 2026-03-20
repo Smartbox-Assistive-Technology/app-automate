@@ -7,10 +7,10 @@ from pathlib import Path
 
 from PIL import Image
 
-from app_automate.vision.screenshots import capture_main_display
-
 
 def capture_app_window(app_name: str, output_path: Path) -> Path:
+    from app_automate.vision.screenshots import capture_main_display
+
     _activate_app(app_name)
     time.sleep(0.4)
     left, top, width, height = front_window_bounds(app_name)
