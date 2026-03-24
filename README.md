@@ -154,6 +154,7 @@ uv run app-automate train --output-dir examples/profiles/new-profile
 Useful debugging options:
 - `--screenshot` to run detection against a saved full-screen image
 - `--primary-x/--primary-y` and `--secondary-x/--secondary-y` to bypass live anchor detection and force known coordinates
+- `--state` to force a specific state instead of auto-detecting (for `dry-run`, `click`, `locate-anchors`, `debug-target`)
 - `--settings` on `train` to use a local settings file instead of environment variables
 - `--app` on `train` to capture the front window of a live macOS app automatically
 - `ax-list --actionable-only` to show only accessible interactive controls on macOS
@@ -198,6 +199,68 @@ Example:
 - `bottom_right`: fixed offset from the detected secondary anchor
 - `center_scaled`: offset from the primary anchor, scaled using the primary/secondary anchor delta
 
+## Multi-State Profiles
+
+Apps often look different in various states - camera connected vs disconnected, dialog open vs closed, recording vs idle. Multi-state profiles handle this by:
+
+1. **State Signatures**: Each state has check regions - tiny template images (e.g., 20x20px status icons) that uniquely identify that state
+2. **State-Specific Layouts**: Each state has its own anchors and element maps
+3. **Automatic Detection**: Runtime checks all state signatures and uses the first match (cheap: ~5-10ms per region)
+
+### State-Based Profile Structure
+
+```json
+{
+  "profile_id": "camera-app",
+  "app_name": "Camera App",
+  "baseline": { "width": 800, "height": 600 },
+  "default_state": "idle",
+  "states": {
+    "idle": {
+      "id": "idle",
+      "signature": {
+        "description": "Camera disconnected",
+        "check_regions": [
+          { "path": "check_no_camera.png", "x": 50, "y": 100, "required": true }
+        ]
+      },
+      "anchors": { "primary": { "id": "titlebar", "path": "anchor.png", "x": 0, "y": 0 } },
+      "elements": { "connect_btn": { "label": "Connect", "rel_x": 100, "rel_y": 50, "layout": "fixed_from_primary" } }
+    },
+    "connected": {
+      "id": "connected",
+      "signature": {
+        "description": "Camera connected",
+        "check_regions": [
+          { "path": "check_camera_icon.png", "x": 50, "y": 100, "required": true }
+        ]
+      },
+      "anchors": { "primary": { "id": "titlebar", "path": "anchor.png", "x": 0, "y": 0 } },
+      "elements": { "record_btn": { "label": "Record", "rel_x": 200, "rel_y": 50, "layout": "fixed_from_primary" } }
+    }
+  }
+}
+```
+
+### Migrating to Multi-State
+
+Legacy single-state profiles (with top-level `anchors` and `elements`) still work. To migrate:
+
+1. Create profiles for each app state using `train`
+2. Manually combine them into a multi-state profile
+3. Add `signature.check_regions` to each state (small crops of unique visual indicators)
+4. Set `default_state` to the most common state
+
+### State Detection at Runtime
+
+```bash
+# Automatic state detection (default)
+uv run app-automate click record --profile examples/profiles/camera-app
+
+# Force a specific state (skip detection)
+uv run app-automate click connect --profile examples/profiles/camera-app --state idle
+```
+
 ## Current Limitations
 
 - macOS accessibility inspection currently uses `System Events` UI scripting rather than lower-level AX bindings.
@@ -207,11 +270,11 @@ Example:
 - The builder can now reject weak mappings, but it still does not rank anchors intelligently before asking the user to review them.
 - Resizing works best for controls anchored to corners or edges.
 - Fully scaled controls depend on the app resizing proportionally.
-- Switching app modes can invalidate a profile even if the window frame remains stable.
 - Multi-display support exists through `mss`, but the validation matrix is still small.
 - The current live input path uses `pyautogui`, which should work on Windows for basic input, but we do not yet have a Windows-specific adapter or a strong Windows validation matrix.
 - Automatic app-window capture during training is currently macOS-only.
 - Prompt quality still needs improvement for generic repeated UIs such as tiled galleries or repeated controls.
+- Multi-state profile creation requires manual assembly of individual state profiles.
 
 ## Troubleshooting
 
@@ -220,6 +283,10 @@ If anchor detection fails:
 - check the anchor confidence values
 - verify that the stored anchor images match the same coordinate system as runtime capture
 - rebuild the anchor crops if the app theme or window chrome changed
+
+- check whether check regions are unique enough and small enough to be used as signatures
+- use `--state` to force a specific state (- run `locate-anchors` with `--screenshot` to
+- try retraining from a cleaner app state
 
 If `train` fails:
 - inspect `mapping_error.txt` in the output directory

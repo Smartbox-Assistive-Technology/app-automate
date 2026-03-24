@@ -30,11 +30,15 @@ The project is macOS-first for development and validation, with Windows as the t
 
 1. Load a saved profile.
 2. Capture the main display or use a supplied screenshot.
-3. Match the primary anchor template.
-4. Match the secondary anchor template when the profile requires one.
-5. Build a runtime transform from baseline anchor positions to live anchor positions.
-6. Resolve the requested element through its layout mode.
-7. Either:
+3. **If the profile has multiple states, detect the active state:**
+   - For each state, check its signature regions (tiny template matches at expected positions)
+   - Use the first matching state's anchors and elements
+   - Fall back to `default_state` if no state matches
+4. Match the primary anchor template.
+5. Match the secondary anchor template when the profile requires one.
+6. Build a runtime transform from baseline anchor positions to live anchor positions.
+7. Resolve the requested element through its layout mode.
+8. Either:
    - return coordinates with `dry-run`
    - write annotated output with `debug-target`
    - click through the input adapter with `click`
@@ -78,11 +82,132 @@ The project is macOS-first for development and validation, with Windows as the t
 - `bottom_right`: fixed offset from the live secondary anchor
 - `center_scaled`: offset from the primary anchor, scaled between the two anchors
 
+## Multi-State Profiles
+
+Apps often have distinct UI states. A camera connected/dis disconnected, dialogs appear, Each mode can be handled by:
+
+1. Creating separate profiles for each state during `train`
+2. Manually combine them into a multi-state profile
+3. At runtime, use signature regions for detect the active state
+
+### When to use:
+- Create separate profiles for each app state using `train`
+- Define check regions for each state (small template images of unique visual indicators)
+- At training time, the LLM identifies these check regions
+- Save signature crops alongside anchor images
+- Validate each state's structure
+
+### Multi-State Profile example
+
+```json
+{
+  "profile_id": "camera-app-states",
+  "app_name": "Camera App",
+  "baseline": { "width": 800, "height": 600 },
+  "default_state": "idle",
+  "states": {
+    "idle": {
+      "id": "idle",
+      "signature": {
+        "description": "Camera disconnected, no dialog open",
+        "check_regions": [
+          {
+            "path": "check_no_camera.png",
+            "x": 50,
+            "y": 100,
+            "confidence_threshold": 0.9,
+            "required": true
+          }
+        ]
+      },
+      "anchors": {
+        "primary": {
+          "id": "titlebar",
+          "path": "anchor_primary.png",
+          "x": 0,
+          "y": 0
+        },
+      },
+      "elements": {
+        "connect_btn": {
+          "label": "Connect",
+          "rel_x": 100,
+          "rel_y": 50,
+          "layout": "fixed_from_primary",
+        }
+      }
+    },
+    "connected": {
+      "id": "connected",
+      "signature": {
+        "description": "Camera connected and ready",
+        "check_regions": [
+          {
+            "path": "check_camera_icon.png",
+            "x": 50,
+            "y": 100,
+            "confidence_threshold": 0.9,
+            "required": true
+          }
+        ]
+      },
+      "anchors": {
+        "primary": {
+          "id": "titlebar",
+          "path": "anchor_primary.png",
+          "x": 0,
+          "y": 0
+        },
+        "secondary": {
+          "id": "status_bar",
+          "path": "anchor_secondary.png",
+          "x": 700,
+          "y": 550
+        }
+      },
+      "elements": {
+        "record_btn": {
+          "label": "Record",
+          "rel_x": 50,
+          "rel_y": 20,
+          "layout": "bottom_right"
+        }
+      }
+    }
+  }
+}
+```
+    ]
+  }
+}
+```
+
+- **Check regions** are tiny crops (e.g., 20x20px) of distinctive visual indicators
+- Each region is matched at its expected position (±5px tolerance)
+- A state matches when all `required` regions match
+- First matching state wins; fall back to `default_state`
+
+### State Detection Performance
+
+State detection is O(k) tiny template matches, where k = number of check regions across all states. This is dramatically cheaper than full-screen understanding:
+- Single state check: ~5-10ms per region
+- Typical multi-state profile: 3-5 states × 2-3 regions = ~50-150ms total
+- Avoids expensive vision model calls on every interaction
+
+### Backward Compatibility
+
+Legacy single-state profiles continue to work:
+- Profiles with top-level `anchors` and `elements` use the legacy path
+- Profiles with `states` dict use the new multi-state path
+- Cannot mix both structures in the same profile
+
 ## Current Risks
 
 - UI scripting and AX metadata quality vary significantly between apps.
-- Template matching can degrade after theme changes, app updates, or mode changes.
+- Template matching can degrade after theme changes, app updates, or major mode changes.
 - Some apps do not resize proportionally, which weakens `center_scaled`.
 - A stable titlebar anchor does not guarantee that internal controls behave predictably across all window states.
 - LLM output can still be structurally valid but semantically weak, especially in repeated or grid-heavy UIs.
 - Multi-monitor behavior needs more validation, especially once Windows support is added.
+- State signatures require careful selection of distinctive check regions; poorly chosen regions may cause false positives.
+- Multi-state profile creation is currently manual; no automated workflow exists to combine single-state profiles.
