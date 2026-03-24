@@ -45,6 +45,48 @@ class MappingElement(BaseModel):
         return self
 
 
+class CheckRegionMapping(BaseModel):
+    id: str
+    crop_box: CropBox
+    required: bool = True
+
+    @model_validator(mode="after")
+    def validate_id(self) -> "CheckRegionMapping":
+        if not SNAKE_CASE_RE.match(self.id):
+            raise ValueError("check region ids must be snake_case names")
+        return self
+
+
+class StateSignatureMapping(BaseModel):
+    description: str = ""
+    check_regions: list[CheckRegionMapping] = Field(default_factory=list)
+
+
+class StateMapping(BaseModel):
+    id: str
+    description: str = ""
+    signature: StateSignatureMapping | None = None
+    primary_anchor: MappingAnchor
+    primary_anchor_candidates: list[MappingAnchor] = Field(default_factory=list)
+    secondary_anchor: MappingAnchor | None = None
+    secondary_anchor_candidates: list[MappingAnchor] = Field(default_factory=list)
+    elements: list[MappingElement]
+
+    @model_validator(mode="after")
+    def validate_unique_ids(self) -> "StateMapping":
+        if (
+            self.secondary_anchor is not None
+            and self.primary_anchor.id == self.secondary_anchor.id
+        ):
+            raise ValueError(
+                "primary and secondary anchor ids must differ within a state"
+            )
+        ids = [element.id for element in self.elements]
+        if len(ids) != len(set(ids)):
+            raise ValueError("element ids must be unique within a state")
+        return self
+
+
 class MappingResult(BaseModel):
     app_name: str
     notes: str = ""
@@ -53,6 +95,7 @@ class MappingResult(BaseModel):
     secondary_anchor: MappingAnchor | None = None
     secondary_anchor_candidates: list[MappingAnchor] = Field(default_factory=list)
     elements: list[MappingElement]
+    states: list[StateMapping] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_unique_ids(self) -> "MappingResult":
@@ -66,4 +109,9 @@ class MappingResult(BaseModel):
         ids = [element.id for element in self.elements]
         if len(ids) != len(set(ids)):
             raise ValueError("element ids must be unique")
+        state_ids = [state.id for state in self.states]
+        if len(state_ids) != len(set(state_ids)):
+            raise ValueError("state ids must be unique")
+        if self.states and self.elements:
+            raise ValueError("profile cannot have both top-level elements and states")
         return self

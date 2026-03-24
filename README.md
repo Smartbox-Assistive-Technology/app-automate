@@ -21,6 +21,7 @@ So instead of asking an AI to drive the whole computer every time, we use AI onc
 
 Working today:
 - strict JSON profile schema with Pydantic
+- multi-state profiles with automatic state detection
 - macOS accessibility inspection through `System Events` for apps that expose useful UI metadata
 - training asset generation from screenshots and grid overlays
 - LLM-backed profile generation through Simon Willison's `llm` library
@@ -36,8 +37,9 @@ Working today:
 Not complete yet:
 - profile creation still needs manual review/tuning
 - Windows runtime adapter is not implemented
-- multi-monitor and app-mode changes are only lightly tested
+- multi-monitor support is only lightly tested
 - anchor selection is still not strong enough for every app without retries or manual cleanup
+- LLM-assisted multi-state profile generation needs additional prompt refinement
 
 ## Prerequisites
 

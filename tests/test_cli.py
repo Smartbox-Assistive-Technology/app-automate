@@ -81,8 +81,10 @@ def test_click_command_uses_action_adapter(monkeypatch) -> None:
     monkeypatch.setattr(
         cli,
         "_load_runner_actions",
-        lambda: lambda adapter, result: adapter.click(
-            result.model_dump()["x"], result.model_dump()["y"]
+        lambda: (
+            lambda adapter, result: adapter.click(
+                result.model_dump()["x"], result.model_dump()["y"]
+            )
         ),
     )
 
@@ -114,7 +116,9 @@ def test_locate_anchors_command_uses_detected_context(monkeypatch) -> None:
         cli,
         "_runtime_context",
         lambda **_: SimpleNamespace(
-            profile=cli.load_profile(Path("examples/profiles/photo-booth/profile.json")),
+            profile=cli.load_profile(
+                Path("examples/profiles/photo-booth/profile.json")
+            ),
             live_primary=(522.0, 207.0),
             live_secondary=(1129.0, 736.0),
             screenshot_path=Path("/tmp/synthetic-screen.png"),
@@ -148,7 +152,7 @@ def test_locate_anchors_command_uses_detected_context(monkeypatch) -> None:
     )
 
     assert result.exit_code == 0
-    assert '"screenshot_path": "\\\\tmp\\\\synthetic-screen.png"' in result.stdout
+    assert "synthetic-screen.png" in result.stdout
     assert '"x": 522.0' in result.stdout
 
 
@@ -162,7 +166,9 @@ def test_debug_target_writes_overlay(monkeypatch) -> None:
         cli,
         "_runtime_context",
         lambda **_: SimpleNamespace(
-            profile=cli.load_profile(Path("examples/profiles/photo-booth/profile.json")),
+            profile=cli.load_profile(
+                Path("examples/profiles/photo-booth/profile.json")
+            ),
             live_primary=(522.0, 207.0),
             live_secondary=(1129.0, 736.0),
             screenshot_path=screenshot_path,

@@ -39,9 +39,7 @@ def list_app_ui_elements(
     automation = _import_uiautomation()
     windows = _safe_children(automation.GetRootControl())
     matching_windows = [
-        window
-        for window in windows
-        if _matches_app_window(window, app_name)
+        window for window in windows if _matches_app_window(window, app_name)
     ]
     if not matching_windows:
         raise RuntimeError(f'no visible UIA windows found for app "{app_name}"')
@@ -317,9 +315,7 @@ def _find_matching_controls(
     automation = _import_uiautomation()
     windows = _safe_children(automation.GetRootControl())
     matching_windows = [
-        window
-        for window in windows
-        if _matches_app_window(window, app_name)
+        window for window in windows if _matches_app_window(window, app_name)
     ]
     if not matching_windows:
         raise RuntimeError(f'no visible UIA windows found for app "{app_name}"')

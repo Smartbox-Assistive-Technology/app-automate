@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app_automate.config.models import AppProfile
+from app_automate.config.models import Anchors, AppProfile
 
 
 @dataclass(slots=True)
@@ -19,9 +19,24 @@ def compute_transform(
     live_primary: tuple[float, float],
     live_secondary: tuple[float, float] | None,
 ) -> Transform:
-    baseline_primary = (profile.anchors.primary.x, profile.anchors.primary.y)
+    if profile.anchors is None:
+        raise ValueError("profile has no anchors defined for legacy transform")
+    return compute_transform_from_anchors(
+        anchors=profile.anchors,
+        live_primary=live_primary,
+        live_secondary=live_secondary,
+    )
 
-    if profile.anchors.secondary is None or live_secondary is None:
+
+def compute_transform_from_anchors(
+    anchors: Anchors,
+    *,
+    live_primary: tuple[float, float],
+    live_secondary: tuple[float, float] | None,
+) -> Transform:
+    baseline_primary = (anchors.primary.x, anchors.primary.y)
+
+    if anchors.secondary is None or live_secondary is None:
         return Transform(
             primary=live_primary,
             secondary=live_secondary,
@@ -30,8 +45,8 @@ def compute_transform(
         )
 
     baseline_secondary = (
-        profile.anchors.secondary.x,
-        profile.anchors.secondary.y,
+        anchors.secondary.x,
+        anchors.secondary.y,
     )
     baseline_dx = baseline_secondary[0] - baseline_primary[0]
     baseline_dy = baseline_secondary[1] - baseline_primary[1]

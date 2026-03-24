@@ -33,6 +33,7 @@ def _runtime_context(
     secondary_x: float | None,
     secondary_y: float | None,
     screenshot: Path | None = None,
+    state_id: str | None = None,
 ) -> Any:
     profile_json_path = _profile_path(profile)
     loaded = load_profile(profile_json_path)
@@ -62,6 +63,7 @@ def _runtime_context(
         profile=loaded,
         profile_dir=profile_json_path.parent,
         screenshot_path=screenshot,
+        state_id=state_id,
     )
 
 
