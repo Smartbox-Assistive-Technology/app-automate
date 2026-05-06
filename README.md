@@ -1,61 +1,16 @@
 # app-automate
 
-`app-automate` is an accessibility-oriented automation tool built around two phases:
+`app-automate` discovers interactive elements in desktop applications and drives them through platform accessibility APIs, browser DevTools, or visual profile matching.
 
-1. Build an app-specific interaction profile from screenshots and a numbered grid.
-2. Run commands locally using saved profiles plus computer vision.
+Three backend strategies, picked per-app:
 
-The codebase is currently developed and validated on macOS. The core runtime is intentionally platform-neutral so Windows can become the main production platform later without replacing the profile model, transform logic, or CV matching.
+| Backend | How it works | Best for |
+|---------|-------------|----------|
+| **UIA** | Windows UI Automation tree | Native Windows apps (Calculator, classic Outlook) |
+| **CDP** | Chrome DevTools Protocol via Playwright | WebView2 apps (new Outlook, Teams) |
+| **CV** | Screenshot + LLM-built profile + template matching | Anything else; cross-platform fallback |
 
-## Plain-English Overview
-
-This project is trying to make software easier to use by teaching the computer where important buttons are in a specific app.
-
-A very simple way to think about it:
-- first, the tool looks at a screenshot of an app and builds a map of where things are
-- later, it uses that saved map to find the app on screen again and click the right place
-
-So instead of asking an AI to drive the whole computer every time, we use AI once to help build a reusable map, then use faster local computer vision to do the repeated work.
-
-## Project Status
-
-Working today:
-- strict JSON profile schema with Pydantic
-- multi-state profiles with automatic state detection
-- macOS accessibility inspection through `System Events` for apps that expose useful UI metadata
-- training asset generation from screenshots and grid overlays
-- LLM-backed profile generation through Simon Willison's `llm` library
-- settings-file-based LLM configuration via `app-automate.settings.toml`
-- automatic macOS front-window capture during training
-- automatic anchor cropping and anchor validation during training
-- retry artifacts for rejected LLM mappings
-- template-matching anchor detection from a full-screen capture
-- coordinate resolution for anchored and scaled controls
-- debug overlay output for target validation
-- real clicking through `pyautogui`
-
-Not complete yet:
-- profile creation still needs manual review/tuning
-- Windows runtime adapter is not implemented
-- multi-monitor support is only lightly tested
-- anchor selection is still not strong enough for every app without retries or manual cleanup
-- LLM-assisted multi-state profile generation needs additional prompt refinement
-
-## Prerequisites
-
-- macOS with `Screen Recording` permission enabled for Codex or the process running this tool
-- macOS with `Accessibility` permission enabled for Codex or the process running this tool
-- Python managed through `uv`
-
-Without those permissions:
-- screen capture may fail or return empty images
-- `click` may do nothing or fail unpredictably
-
-## Tooling
-
-- `uv` for packaging, dependency management, and commands
-- `ruff` for linting and formatting
-- `pytest` for tests
+Use `probe <app>` to auto-detect the right backend.
 
 ## Quick Start
 
@@ -66,15 +21,11 @@ uv run ruff format .
 uv run pytest
 ```
 
-To use the LLM-backed builder, create a local settings file from the example:
+For the LLM-backed visual profile builder, copy and edit the settings file:
 
 ```bash
 cp app-automate.settings.example.toml app-automate.settings.toml
 ```
-
-Then add your API key and chosen model there. The real settings file is ignored by git.
-
-Example:
 
 ```toml
 [llm]
@@ -87,91 +38,110 @@ grid_size = 120
 anchor_confidence_threshold = 0.85
 ```
 
-For local development only, `.env.local` is also supported as a fallback for `OPENAI_KEY` or `OPENAI_API_KEY`, but the intended production path is the settings file.
+## Workflow
 
-## Typical Workflow
-
-1. Generate training assets from a screenshot:
+### 1. Discover which backend to use
 
 ```bash
-uv run app-automate train --screenshot examples/profiles/photo-booth/window.png --output-dir examples/profiles/photo-booth
+uv run --no-project app-automate probe "Calculator"
 ```
 
-Or capture the front window of a live macOS app and run the LLM-backed builder:
+Returns a recommendation (`uia`, `cdp`, or `cv`) with element counts and reasoning.
+
+### 2. Interact directly (UIA or CDP)
+
+No profile needed — these backends query the live app:
 
 ```bash
-uv run app-automate train --app "Photo Booth" --settings app-automate.settings.toml --output-dir examples/profiles/photo-booth-trained
+# Windows native app
+uv run --no-project app-automate uia-list --app "Calculator" --actionable-only
+uv run --no-project app-automate uia-click --app "Calculator" --contains "Close" --execute
+
+# WebView2 app — enable CDP first
+uv run --no-project app-automate cdp-setup --app "Outlook"
+uv run --no-project app-automate cdp-list --actionable-only
+uv run --no-project app-automate cdp-click --contains "New email" --exact --execute
+uv run --no-project app-automate cdp-type --contains "To" --exact --text "user@example.com" --execute
 ```
 
-That training run now:
-- captures the app window on macOS
-- renders a grid overlay
-- sends the grid image to the configured LLM
-- validates anchor crops and profile structure
-- retries if the mapping is rejected
-- saves both successful output and failed-attempt artifacts
+### 3. Build a visual profile (CV path)
 
-2. Inspect a saved profile:
+For apps where accessibility APIs don't reach, build a profile from a screenshot:
 
 ```bash
-uv run app-automate inspect examples/profiles/photo-booth/profile.json
+# Capture the front window and build a profile
+uv run --no-project app-automate train --app "Photo Booth" --settings app-automate.settings.toml --output-dir examples/profiles/photo-booth
+
+# Or from an existing screenshot
+uv run --no-project app-automate train --screenshot window.png --output-dir examples/profiles/my-app
 ```
 
-3. Check whether the runtime can find the live anchors:
+Then run commands against the saved profile:
 
 ```bash
-uv run app-automate locate-anchors --profile examples/profiles/photo-booth/profile.json
+uv run --no-project app-automate inspect examples/profiles/photo-booth/profile.json
+uv run --no-project app-automate locate-anchors --profile examples/profiles/photo-booth/profile.json
+uv run --no-project app-automate dry-run effects --profile examples/profiles/photo-booth/profile.json
+uv run --no-project app-automate click effects --profile examples/profiles/photo-booth/profile.json
 ```
 
-4. Validate a resolved target without clicking:
+## CLI Reference
 
-```bash
-uv run app-automate debug-target effects --profile examples/profiles/photo-booth/profile.json --output-dir debug-output/photo-booth
-```
+### Probe and Discovery
 
-5. Execute a real click:
+| Command | Description |
+|---------|-------------|
+| `probe <app>` | Detect best backend (UIA / CDP / CV) for an app |
 
-```bash
-uv run app-automate click effects --profile examples/profiles/photo-booth/profile.json
-```
+### UIA (Windows native apps)
 
-## CLI
+| Command | Description |
+|---------|-------------|
+| `uia-list --app <name>` | List UI elements via Windows UI Automation |
+| `uia-click --app <name> --contains <text>` | Click a matched element |
+| `uia-type --app <name> --contains <text> --text <text>` | Type into a matched element |
 
-Common commands:
+### CDP (WebView2 apps)
 
-```bash
-uv run app-automate ax-list --app "Pages"
-uv run app-automate ax-click --app "Pages" --contains "Insert" --max-depth 2 --dry-run
-uv run app-automate inspect examples/profiles/camera-demo/profile.json
-uv run app-automate list-elements examples/profiles/camera-demo/profile.json
-uv run app-automate dry-run record --profile examples/profiles/camera-demo/profile.json
-uv run app-automate locate-anchors --profile examples/profiles/photo-booth/profile.json
-uv run app-automate debug-target effects --profile examples/profiles/photo-booth/profile.json --output-dir debug-output/photo-booth
-uv run app-automate click effects --profile examples/profiles/photo-booth/profile.json
-uv run app-automate train --output-dir examples/profiles/new-profile
-```
+| Command | Description |
+|---------|-------------|
+| `cdp-setup --app <name>` | Enable CDP debugging and restart the app |
+| `cdp-list` | List interactive elements via Chrome DevTools Protocol |
+| `cdp-click --contains <text>` | Click a matched element |
+| `cdp-type --contains <text> --text <text>` | Type into a matched field |
 
-Useful debugging options:
-- `--screenshot` to run detection against a saved full-screen image
-- `--primary-x/--primary-y` and `--secondary-x/--secondary-y` to bypass live anchor detection and force known coordinates
-- `--state` to force a specific state instead of auto-detecting (for `dry-run`, `click`, `locate-anchors`, `debug-target`)
-- `--settings` on `train` to use a local settings file instead of environment variables
-- `--app` on `train` to capture the front window of a live macOS app automatically
-- `ax-list --actionable-only` to show only accessible interactive controls on macOS
-- `ax-click --dry-run` to resolve an accessible control before executing input
+### macOS Accessibility
+
+| Command | Description |
+|---------|-------------|
+| `ax-list --app <name>` | List UI elements via macOS System Events |
+| `ax-click --app <name> --contains <text>` | Click a matched element |
+
+### Visual Profiles (CV)
+
+| Command | Description |
+|---------|-------------|
+| `train --app <name>` | Capture window, generate grid, build profile via LLM |
+| `inspect <profile>` | Describe a saved profile |
+| `list-elements <profile>` | List elements in a profile |
+| `locate-anchors --profile <path>` | Check live anchor detection |
+| `dry-run <command> --profile <path>` | Resolve a target without clicking |
+| `click <command> --profile <path>` | Execute a click on a resolved target |
+| `debug-target <command> --profile <path>` | Generate annotated debug overlay |
+
+### Common Options
+
+- `--exact` / `--substring` — exact vs substring matching for `--contains` (CDP commands)
+- `--dry-run` / `--execute` — preview vs real input (UIA, CDP, macOS)
+- `--actionable-only` / `--all` — filter to interactive controls
+- `--json` / `--table` — output format for list commands
+- `--index <n>` — select among multiple matches (1-based)
+- `--app <name>` — capture or target a specific app window
+- `--port <n>` — CDP port (default 9222)
 
 ## Profile Anatomy
 
-The main example profile is [profile.json](/Users/willwade/GitHub/app-automate/examples/profiles/photo-booth/profile.json).
-
-Key fields:
-- `baseline`: the reference window size used when the profile was created
-- `anchors.primary`: the main visual anchor and its baseline position
-- `anchors.secondary`: an optional second anchor for scaling and edge-anchored controls
-- `elements[*].rel_x` / `rel_y`: element coordinates relative to the profile’s anchor system
-- `elements[*].layout`: how the element should behave when the window moves or resizes
-
-Example:
+Profiles are JSON files describing an app's visual layout relative to anchor images.
 
 ```json
 {
@@ -192,22 +162,22 @@ Example:
 }
 ```
 
-## Layout Modes
+Key fields:
+- `baseline`: reference window size used when the profile was created
+- `anchors.primary` / `anchors.secondary`: visual anchor images and baseline positions
+- `elements[*].rel_x` / `rel_y`: element coordinates relative to the anchor system
+- `elements[*].layout`: how the element behaves when the window moves or resizes
+
+### Layout Modes
 
 - `fixed_from_primary`: fixed offset from the detected primary anchor
-- `top_right`: x from the detected secondary anchor, y from the detected primary origin
+- `top_right`: x from secondary anchor, y from primary
 - `bottom_right`: fixed offset from the detected secondary anchor
-- `center_scaled`: offset from the primary anchor, scaled using the primary/secondary anchor delta
+- `center_scaled`: offset from primary, scaled using primary/secondary delta
 
 ## Multi-State Profiles
 
-Apps often look different in various states - camera connected vs disconnected, dialog open vs closed, recording vs idle. Multi-state profiles handle this by:
-
-1. **State Signatures**: Each state has check regions - tiny template images (e.g., 20x20px status icons) that uniquely identify that state
-2. **State-Specific Layouts**: Each state has its own anchors and element maps
-3. **Automatic Detection**: Runtime checks all state signatures and uses the first match (cheap: ~5-10ms per region)
-
-### State-Based Profile Structure
+Apps change appearance across states. Multi-state profiles handle this with per-state signatures:
 
 ```json
 {
@@ -218,23 +188,13 @@ Apps often look different in various states - camera connected vs disconnected, 
   "states": {
     "idle": {
       "id": "idle",
-      "signature": {
-        "description": "Camera disconnected",
-        "check_regions": [
-          { "path": "check_no_camera.png", "x": 50, "y": 100, "required": true }
-        ]
-      },
+      "signature": { "check_regions": [{ "path": "check_no_camera.png", "x": 50, "y": 100, "required": true }] },
       "anchors": { "primary": { "id": "titlebar", "path": "anchor.png", "x": 0, "y": 0 } },
       "elements": { "connect_btn": { "label": "Connect", "rel_x": 100, "rel_y": 50, "layout": "fixed_from_primary" } }
     },
     "connected": {
       "id": "connected",
-      "signature": {
-        "description": "Camera connected",
-        "check_regions": [
-          { "path": "check_camera_icon.png", "x": 50, "y": 100, "required": true }
-        ]
-      },
+      "signature": { "check_regions": [{ "path": "check_camera_icon.png", "x": 50, "y": 100, "required": true }] },
       "anchors": { "primary": { "id": "titlebar", "path": "anchor.png", "x": 0, "y": 0 } },
       "elements": { "record_btn": { "label": "Record", "rel_x": 200, "rel_y": 50, "layout": "fixed_from_primary" } }
     }
@@ -242,75 +202,81 @@ Apps often look different in various states - camera connected vs disconnected, 
 }
 ```
 
-### Migrating to Multi-State
+Runtime auto-detects the current state by matching signature regions (~5-10ms per region). Use `--state` to force a specific state.
 
-Legacy single-state profiles (with top-level `anchors` and `elements`) still work. To migrate:
+## Platform Support
 
-1. Create profiles for each app state using `train`
-2. Manually combine them into a multi-state profile
-3. Add `signature.check_regions` to each state (small crops of unique visual indicators)
-4. Set `default_state` to the most common state
+### Windows
 
-### State Detection at Runtime
+- **UIA** — uses `uiautomation` library; works for native Win32/WPF/WinUI apps
+- **CDP** — uses Playwright `connect_over_cdp()`; for WebView2 apps
+- **CV** — visual profile path with `ctypes`/`user32` window capture
+- DPI awareness handled via `SetProcessDpiAwareness(2)`
+- Window capture via `EnumWindows` / `GetWindowRect`
+- Note: the `comtypes` gen cache can corrupt between runs; `uia-list` auto-clears it
 
-```bash
-# Automatic state detection (default)
-uv run app-automate click record --profile examples/profiles/camera-app
+### macOS
 
-# Force a specific state (skip detection)
-uv run app-automate click connect --profile examples/profiles/camera-app --state idle
-```
+- **Accessibility** — uses System Events UI scripting
+- **CV** — visual profile path with `screencapture` window capture
+- Requires `Screen Recording` and `Accessibility` permissions
 
-## Current Limitations
+## Project Status
 
-- macOS accessibility inspection currently uses `System Events` UI scripting rather than lower-level AX bindings.
-- macOS semantic actions currently resolve element bounds semantically, then execute input through `pyautogui`.
-- Some macOS apps expose useful accessibility labels and bounds; others expose very little.
-- LLM-backed builder output still requires manual inspection and adjustment.
-- The builder can now reject weak mappings, but it still does not rank anchors intelligently before asking the user to review them.
-- Resizing works best for controls anchored to corners or edges.
-- Fully scaled controls depend on the app resizing proportionally.
-- Multi-display support exists through `mss`, but the validation matrix is still small.
-- The current live input path uses `pyautogui`, which should work on Windows for basic input, but we do not yet have a Windows-specific adapter or a strong Windows validation matrix.
-- Automatic app-window capture during training is currently macOS-only.
-- Prompt quality still needs improvement for generic repeated UIs such as tiled galleries or repeated controls.
-- Multi-state profile creation requires manual assembly of individual state profiles.
+Working today:
+- JSON profile schema with Pydantic validation
+- Multi-state profiles with automatic state detection
+- macOS accessibility inspection via System Events
+- Windows UIA inspection and direct click/type
+- Windows CDP inspection and direct click/type via Playwright
+- `probe` command for auto-detecting the best backend per app
+- Training asset generation from screenshots and grid overlays
+- LLM-backed profile generation via the `llm` library
+- Automatic window capture on both macOS and Windows
+- Automatic anchor cropping and validation
+- Template-matching anchor detection
+- Coordinate resolution for anchored and scaled controls
+- Debug overlay output for target validation
+
+Not complete yet:
+- Profile creation still needs manual review/tuning
+- Multi-monitor / DPI scale validation matrix (100%, 125%, 150%)
+- CDP port is global — not aware of which app's WebView2 to connect to when multiple are running
+- Hybrid profiles combining UIA + CV selectors
+- LLM-assisted multi-state profile generation needs prompt refinement
+- Anchor selection is still not strong enough for every app without retries
+
+## Tooling
+
+- `uv` for packaging, dependency management, and commands
+- `ruff` for linting and formatting
+- `pytest` for tests
 
 ## Troubleshooting
 
-If anchor detection fails:
-- run `locate-anchors` first
-- check the anchor confidence values
-- verify that the stored anchor images match the same coordinate system as runtime capture
-- rebuild the anchor crops if the app theme or window chrome changed
+**`probe` recommends wrong backend**: some apps expose partial UIA trees. Run `uia-list --app <name> --actionable-only` and `cdp-list` separately to see what each finds.
 
-- check whether check regions are unique enough and small enough to be used as signatures
-- use `--state` to force a specific state (- run `locate-anchors` with `--screenshot` to
-- try retraining from a cleaner app state
+**`uia-list` fails or crashes**: the `comtypes` cache may be corrupt. The tool auto-clears it, but if issues persist, manually delete `.venv/Lib/site-packages/comtypes/gen/*`.
 
-If `train` fails:
-- inspect `mapping_error.txt` in the output directory
-- inspect any `mapping_output.attempt-N.json` files to see what the model proposed
-- check whether the model chose a repeated tile or an over-large crop as an anchor
-- try retraining from a cleaner app state with fewer repeated controls on screen
+**`cdp-list` fails**: CDP must be enabled first. Run `cdp-setup --app <name>`, then close and reopen the app. Verify with `cdp-setup` (no args) — it should show `"listening": "true"`.
 
-If a click lands in the wrong place:
-- run `debug-target` and inspect the generated overlay image
-- compare the detected anchors with the visible window corners
-- check whether the control uses the correct `layout`
-- confirm the app is in the same mode the profile was trained against
+**`cdp-click --contains "X"` matches too broadly**: use `--exact` to require an exact label match instead of substring.
 
-If macOS capture or clicking fails:
-- re-check `Screen Recording` and `Accessibility` permissions
-- verify the app is visible on screen and not minimized
+**Anchor detection fails (CV path)**: run `locate-anchors`, check confidence values, verify anchor images match the current app appearance. Rebuild with `train` if the app theme or window chrome changed.
+
+**Click lands in wrong place (CV path)**: run `debug-target` and inspect the overlay image. Check the control's `layout` mode and confirm the app is in the expected state.
+
+**macOS capture or clicking fails**: re-check `Screen Recording` and `Accessibility` permissions in System Settings.
 
 ## Coordinate Notes
 
-Runtime capture uses `mss`, which reports logical display coordinates on this Mac. That keeps anchor detection aligned with `pyautogui` click coordinates on Retina displays. Profile assets and runtime capture need to stay in the same coordinate system.
+On macOS, runtime capture uses `mss` which reports logical display coordinates, keeping anchor detection aligned with `pyautogui` click coordinates on Retina displays.
+
+On Windows, DPI awareness is set to per-monitor DPI-aware (level 2) so coordinates from `GetWindowRect` and `mss` capture are in physical pixels.
 
 ## Additional Docs
 
-- [Architecture](/Users/willwade/GitHub/app-automate/docs/architecture.md)
-- [MVP Roadmap](/Users/willwade/GitHub/app-automate/docs/mvp-roadmap.md)
-- [New App Guide](/Users/willwade/GitHub/app-automate/docs/new-app-guide.md)
-- [Windows Integration](/Users/willwade/GitHub/app-automate/docs/windows-integration.md)
+- [Architecture](docs/architecture.md)
+- [MVP Roadmap](docs/mvp-roadmap.md)
+- [New App Guide](docs/new-app-guide.md)
+- [Windows Integration](docs/windows-integration.md)

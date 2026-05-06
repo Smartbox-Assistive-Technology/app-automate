@@ -89,6 +89,12 @@ def _load_windows_accessibility():
     return windows_uia
 
 
+def _load_cdp_accessibility():
+    from app_automate.accessibility import cdp
+
+    return cdp
+
+
 def _load_training_api():
     from app_automate.builder.training import (
         create_training_bundle,
@@ -1155,6 +1161,364 @@ def debug_target(
         "anchors": summarize_detected_anchors(context).model_dump(mode="json"),
     }
     typer.echo(json.dumps(payload, indent=2))
+
+
+@app.command("cdp-setup")
+def cdp_setup(
+    app_name: Annotated[
+        str,
+        typer.Option(
+            "--app",
+            help=(
+                "App name to restart with CDP. Sets "
+                "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS and restarts the app."
+            ),
+        ),
+    ] = "",
+) -> None:
+    try:
+        cdp = _load_cdp_accessibility()
+        status = cdp.cdp_status()
+        if status.get("listening") == "true":
+            typer.echo(json.dumps(status, indent=2))
+            return
+        if app_name:
+            result = cdp.ensure_cdp_enabled(app_name)
+        else:
+            result = {
+                "listening": "false",
+                "message": (
+                    "CDP is not active. Re-run with --app <name> to enable "
+                    "and restart a WebView2 app."
+                ),
+            }
+        typer.echo(json.dumps(result, indent=2))
+    except Exception as exc:
+        typer.echo(f"cdp-setup failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("cdp-list")
+def cdp_list(
+    actionable_only: Annotated[
+        bool,
+        typer.Option(
+            "--actionable-only/--all",
+            help="Show only interactive elements.",
+        ),
+    ] = False,
+    contains: Annotated[
+        str | None,
+        typer.Option(
+            "--contains",
+            help="Filter by case-insensitive label substring.",
+        ),
+    ] = None,
+    port: Annotated[
+        int,
+        typer.Option("--port", help="CDP remote debugging port."),
+    ] = 9222,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json/--table", help="Emit JSON instead of text."),
+    ] = False,
+    exact: Annotated[
+        bool,
+        typer.Option(
+            "--exact/--substring",
+            help="Require exact label match instead of substring.",
+        ),
+    ] = False,
+) -> None:
+    try:
+        cdp = _load_cdp_accessibility()
+        elements = cdp.list_cdp_elements(
+            port,
+            actionable_only=actionable_only,
+            contains=contains,
+            exact=exact,
+        )
+    except Exception as exc:
+        typer.echo(f"cdp-list failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if as_json:
+        typer.echo(json.dumps([e.as_dict() for e in elements], indent=2))
+        return
+    typer.echo(_format_semantic_elements(elements))
+
+
+@app.command("cdp-click")
+def cdp_click(
+    contains: Annotated[
+        str,
+        typer.Option("--contains", help="Substring match for the target label."),
+    ],
+    index: Annotated[
+        int,
+        typer.Option("--index", min=1, help="1-based match index."),
+    ] = 1,
+    port: Annotated[
+        int,
+        typer.Option("--port", help="CDP remote debugging port."),
+    ] = 9222,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run/--execute",
+            help="Preview target without clicking.",
+        ),
+    ] = True,
+    exact: Annotated[
+        bool,
+        typer.Option(
+            "--exact/--substring",
+            help="Require exact label match instead of substring.",
+        ),
+    ] = False,
+) -> None:
+    try:
+        cdp = _load_cdp_accessibility()
+        if dry_run:
+            elements = cdp.find_cdp_elements(
+                contains=contains, port=port, actionable_only=True, exact=exact
+            )
+            if not elements:
+                raise RuntimeError(f'no CDP elements matched "{contains}"')
+            if index < 1 or index > len(elements):
+                raise RuntimeError(
+                    f"index {index} out of range; {len(elements)} matches"
+                )
+            element = elements[index - 1]
+            x, y = _element_center(element)
+            payload = {
+                "path": element.path,
+                "label": element.label,
+                "class_name": element.class_name,
+                "action": "click",
+                "x": round(x, 2),
+                "y": round(y, 2),
+                "bounds": {
+                    "x": element.x,
+                    "y": element.y,
+                    "width": element.width,
+                    "height": element.height,
+                },
+            }
+            typer.echo(json.dumps(payload, indent=2))
+            return
+
+        element = cdp.click_cdp_element(
+            contains=contains, port=port, index=index, exact=exact
+        )
+        x, y = _element_center(element)
+        payload = {
+            "path": element.path,
+            "label": element.label,
+            "class_name": element.class_name,
+            "action": "click",
+            "x": round(x, 2),
+            "y": round(y, 2),
+        }
+        typer.echo(json.dumps(payload, indent=2))
+    except Exception as exc:
+        typer.echo(f"cdp-click failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("cdp-type")
+def cdp_type(
+    contains: Annotated[
+        str,
+        typer.Option("--contains", help="Substring match for the target field."),
+    ],
+    text: Annotated[
+        str,
+        typer.Option("--text", help="Text to type."),
+    ],
+    index: Annotated[
+        int,
+        typer.Option("--index", min=1, help="1-based match index."),
+    ] = 1,
+    port: Annotated[
+        int,
+        typer.Option("--port", help="CDP remote debugging port."),
+    ] = 9222,
+    replace: Annotated[
+        bool,
+        typer.Option(
+            "--replace/--append",
+            help="Replace existing text before typing.",
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run/--execute",
+            help="Preview target without typing.",
+        ),
+    ] = True,
+    exact: Annotated[
+        bool,
+        typer.Option(
+            "--exact/--substring",
+            help="Require exact label match instead of substring.",
+        ),
+    ] = False,
+) -> None:
+    try:
+        cdp = _load_cdp_accessibility()
+        if dry_run:
+            elements = cdp.find_cdp_elements(
+                contains=contains, port=port, actionable_only=True, exact=exact
+            )
+            elements = [
+                e for e in elements if e.role in ("textbox", "combobox", "searchbox")
+            ]
+            if not elements:
+                raise RuntimeError(f'no CDP text fields matched "{contains}"')
+            if index < 1 or index > len(elements):
+                raise RuntimeError(
+                    f"index {index} out of range; {len(elements)} matches"
+                )
+            element = elements[index - 1]
+            x, y = _element_center(element)
+            payload = {
+                "path": element.path,
+                "label": element.label,
+                "class_name": element.class_name,
+                "x": round(x, 2),
+                "y": round(y, 2),
+                "text": text,
+                "replace": replace,
+            }
+            typer.echo(json.dumps(payload, indent=2))
+            return
+
+        element = cdp.type_into_cdp_element(
+            contains=contains,
+            text=text,
+            port=port,
+            index=index,
+            replace=replace,
+            exact=exact,
+        )
+        x, y = _element_center(element)
+        payload = {
+            "path": element.path,
+            "label": element.label,
+            "class_name": element.class_name,
+            "x": round(x, 2),
+            "y": round(y, 2),
+            "text": text,
+            "replace": replace,
+        }
+        typer.echo(json.dumps(payload, indent=2))
+    except Exception as exc:
+        typer.echo(f"cdp-type failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("probe")
+def probe(
+    app_name: Annotated[
+        str,
+        typer.Argument(help="App name or window title to probe."),
+    ],
+) -> None:
+    result = _probe_app(app_name)
+    typer.echo(json.dumps(result, indent=2))
+
+
+def _probe_app(app_name: str) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "app_name": app_name,
+        "uia": None,
+        "cdp": None,
+        "recommendation": None,
+    }
+
+    uia_elements = _probe_uia(app_name)
+    result["uia"] = uia_elements
+
+    cdp_info = _probe_cdp()
+    result["cdp"] = cdp_info
+
+    if (
+        uia_elements["interactive_with_bounds"] >= 20
+        and not uia_elements["title_bar_only"]
+    ):
+        result["recommendation"] = "uia"
+        result["reason"] = (
+            f"UIA found {uia_elements['interactive_with_bounds']} "
+            "interactive elements with bounds"
+        )
+    elif cdp_info["available"]:
+        result["recommendation"] = "cdp"
+        result["reason"] = (
+            f"CDP available (page: {cdp_info['page_title']}), "
+            f"UIA only found {uia_elements['interactive_with_bounds']} elements"
+        )
+    else:
+        result["recommendation"] = "cv"
+        result["reason"] = (
+            "UIA coverage is poor and CDP is not available; "
+            "use visual profile with train --app"
+        )
+
+    return result
+
+
+def _probe_uia(app_name: str) -> dict[str, Any]:
+    info: dict[str, Any] = {
+        "available": False,
+        "interactive_with_bounds": 0,
+        "title_bar_only": False,
+    }
+    try:
+        wa = _load_windows_accessibility()
+        elements = wa.list_app_ui_elements(app_name, max_depth=15, actionable_only=True)
+        with_bounds = [e for e in elements if e.has_bounds]
+        info["available"] = True
+        info["interactive_with_bounds"] = len(with_bounds)
+        info["total_elements"] = len(elements)
+        roles = set(e.class_name for e in with_bounds)
+        info["roles"] = sorted(roles)
+        title_roles = {
+            "ButtonControl",
+            "MenuBarControl",
+            "MenuItemControl",
+            "TitleBarControl",
+        }
+        non_title = [e for e in with_bounds if e.class_name not in title_roles]
+        if with_bounds and not non_title:
+            info["title_bar_only"] = True
+    except Exception:
+        info["available"] = False
+        info["error"] = "no matching window found or UIA unavailable"
+    return info
+
+
+def _probe_cdp() -> dict[str, Any]:
+    info: dict[str, Any] = {
+        "available": False,
+        "port": 9222,
+    }
+    try:
+        cdp = _load_cdp_accessibility()
+        status = cdp.cdp_status()
+        if status.get("listening") == "true":
+            info["available"] = True
+            info["page_title"] = status.get("page_title", "")
+            info["page_url"] = status.get("page_url", "")
+            try:
+                elements = cdp.list_cdp_elements(actionable_only=True)
+                info["interactive_elements"] = len(elements)
+            except Exception:
+                info["interactive_elements"] = "error"
+    except Exception:
+        info["available"] = False
+    return info
 
 
 def main() -> None:

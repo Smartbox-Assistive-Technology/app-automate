@@ -354,7 +354,30 @@ def _find_matching_controls(
     )
 
 
+def _clear_comtypes_gen_cache() -> None:
+    try:
+        import shutil
+
+        import comtypes.client
+
+        gen_dir = comtypes.client.gen_dir
+        if gen_dir:
+            for entry in gen_dir.iterdir():
+                if entry.name == "__init__.py":
+                    continue
+                try:
+                    if entry.is_dir():
+                        shutil.rmtree(entry)
+                    else:
+                        entry.unlink()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
 def _import_uiautomation() -> Any:
+    _clear_comtypes_gen_cache()
     try:
         import uiautomation as automation
     except ImportError as exc:
