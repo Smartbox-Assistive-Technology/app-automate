@@ -108,40 +108,46 @@ def _el_rect(el: object) -> dict[str, int]:
     }
 
 
-def _click_tool(profile: object, *tool_names: str) -> None:
+def _click_tool(profile: object, name: str) -> None:
     from app_automate.accessibility import windows_uia
     from app_automate.adapters.windows_input import WindowsInputAdapter
     from app_automate.config.models import AppProfile
 
     assert isinstance(profile, AppProfile)
-    for name in tool_names:
-        name_lower = name.lower()
-        for eid, el in profile.semantic_elements.items():
-            if el.label.lower() == name_lower or name_lower in el.label.lower():
-                print(f"  Trying: {el.label} (role={el.role})")
-                try:
-                    matches = windows_uia.find_matching_elements(
-                        profile.app_name,
-                        contains=el.label,
-                        max_depth=15,
-                        actionable_only=False,
-                    )
-                    if not matches:
-                        print("    Not found via UIA")
-                        continue
-                    target = matches[0]
-                    cx = (target.x or 0) + (target.width or 0) / 2.0
-                    cy = (target.y or 0) + (target.height or 0) / 2.0
-                    print(f"    Clicking at ({cx:.0f}, {cy:.0f})")
-                    adapter = WindowsInputAdapter()
-                    adapter.click(cx, cy)
-                    time.sleep(0.3)
-                    print(f"  Selected: {el.label}")
-                    return
-                except Exception as exc:
-                    print(f"  Failed: {exc}")
-                    continue
-    print(f"  WARNING: Could not find tool matching: {tool_names}")
+    name_lower = name.lower()
+
+    exact_match = None
+    partial_matches = []
+    for eid, el in profile.semantic_elements.items():
+        if el.label.lower() == name_lower:
+            exact_match = el
+            break
+        if name_lower in el.label.lower():
+            partial_matches.append(el)
+
+    target_el = exact_match or (partial_matches[0] if partial_matches else None)
+    if not target_el:
+        print(f"  WARNING: Could not find tool matching: {name}")
+        return
+
+    print(f"  Trying: {target_el.label} (role={target_el.role})")
+    matches = windows_uia.find_matching_elements(
+        profile.app_name,
+        contains=target_el.label,
+        max_depth=15,
+        actionable_only=False,
+    )
+    if not matches:
+        print("    Not found via UIA")
+        return
+    target = matches[0]
+    cx = (target.x or 0) + (target.width or 0) / 2.0
+    cy = (target.y or 0) + (target.height or 0) / 2.0
+    print(f"    Clicking at ({cx:.0f}, {cy:.0f})")
+    adapter = WindowsInputAdapter()
+    adapter.click(cx, cy)
+    time.sleep(0.3)
+    print(f"  Selected: {target_el.label}")
 
 
 def _draw_car(profile_path: Path) -> None:
@@ -149,8 +155,7 @@ def _draw_car(profile_path: Path) -> None:
     from app_automate.config.validation import load_profile
 
     profile = load_profile(profile_path)
-    elements = profile.semantic_elements
-    print(f"\nProfile has {len(elements)} elements:")
+    print(f"\nProfile has {len(profile.semantic_elements)} elements:")
 
     print("\nLocating canvas...")
     canvas_path, canvas_rect = _find_canvas(profile)
@@ -164,19 +169,20 @@ def _draw_car(profile_path: Path) -> None:
     oy = canvas_rect["y"] + canvas_rect["height"] / 2.0
     scale = 1.0
 
-    print("Drawing a car...")
+    print("\nDrawing a car...")
 
-    print("  Step 1: Draw body and roof with brush...")
+    # Step 1: Draw closed body outline with brush
+    print("  Step 1: Draw body outline with brush...")
     _click_tool(profile, "Brushes")
     time.sleep(1.0)
 
     body_lines = [
-        ((-150, 20), (150, 20)),
-        ((150, 20), (150, -20)),
-        ((150, -20), (100, -50)),
-        ((100, -50), (-80, -50)),
-        ((-80, -50), (-150, -20)),
-        ((-150, -20), (-150, 20)),
+        ((-150, 20), (-150, -20)),
+        ((-150, -20), (-80, -50)),
+        ((-80, -50), (100, -50)),
+        ((100, -50), (150, -20)),
+        ((150, -20), (150, 20)),
+        ((150, 20), (-150, 20)),
     ]
 
     roof_lines = [
@@ -192,7 +198,7 @@ def _draw_car(profile_path: Path) -> None:
             ox + ex * scale,
             oy + ey * scale,
         )
-        time.sleep(0.1)
+        time.sleep(0.15)
 
     for (sx, sy), (ex, ey) in roof_lines:
         adapter.drag(
@@ -201,84 +207,24 @@ def _draw_car(profile_path: Path) -> None:
             ox + ex * scale,
             oy + ey * scale,
         )
-        time.sleep(0.1)
+        time.sleep(0.15)
 
-    print("  Step 2: Draw wheels with oval shape...")
-    _click_tool(profile, "Oval")
-    time.sleep(1.0)
-
-    adapter.click(ox, oy)
-    time.sleep(0.3)
-
-    for cx_off, cy_off, r in [(-100, 25, 35), (100, 25, 35)]:
-        wcx = ox + cx_off * scale
-        wcy = oy + cy_off * scale
-        radius = r * scale
-        adapter.drag(
-            wcx - radius,
-            wcy - radius,
-            wcx + radius,
-            wcy + radius,
-            duration=0.5,
-        )
-        time.sleep(0.5)
-
-    print("  Step 3: Redraw bottom line over wheels...")
-    _click_tool(profile, "Brushes")
-    time.sleep(1.0)
-
-    adapter.drag(
-        ox + (-150) * scale,
-        oy + 20 * scale,
-        ox + 150 * scale,
-        oy + 20 * scale,
-    )
-    time.sleep(0.1)
-
-    print("  Step 4: Fill body with red...")
+    # Step 2: Fill body with red before adding wheels
+    print("  Step 2: Fill body with red...")
     _click_tool(profile, "Fill")
     time.sleep(1.0)
 
     _click_tool(profile, "Red")
     time.sleep(1.0)
 
-    adapter.click(ox, oy - 15 * scale)
-    time.sleep(0.3)
+    fill_x = ox - 10 * scale
+    fill_y = oy - 10 * scale
+    print(f"    Fill clicking at ({fill_x:.0f}, {fill_y:.0f})")
+    adapter.click(fill_x, fill_y)
+    time.sleep(0.5)
 
-    body_lines = [
-        ((-150, 20), (150, 20)),
-        ((150, 20), (150, -20)),
-        ((150, -20), (100, -50)),
-        ((100, -50), (-80, -50)),
-        ((-80, -50), (-150, -20)),
-        ((-150, -20), (-150, 20)),
-    ]
-
-    roof_lines = [
-        ((-60, -50), (-30, -80)),
-        ((-30, -80), (70, -80)),
-        ((70, -80), (100, -50)),
-    ]
-
-    for (sx, sy), (ex, ey) in body_lines:
-        adapter.drag(
-            ox + sx * scale,
-            oy + sy * scale,
-            ox + ex * scale,
-            oy + ey * scale,
-        )
-        time.sleep(0.1)
-
-    for (sx, sy), (ex, ey) in roof_lines:
-        adapter.drag(
-            ox + sx * scale,
-            oy + sy * scale,
-            ox + ex * scale,
-            oy + ey * scale,
-        )
-        time.sleep(0.1)
-
-    print("  Step 2: Draw wheels with oval shape...")
+    # Step 3: Draw wheels with oval shape
+    print("  Step 3: Draw wheels with oval shape...")
     _click_tool(profile, "Oval")
     time.sleep(1.0)
 
@@ -297,6 +243,22 @@ def _draw_car(profile_path: Path) -> None:
             duration=0.5,
         )
         time.sleep(0.5)
+
+    # Step 4: Redraw bottom line over wheels
+    print("  Step 4: Redraw bottom line over wheels...")
+    _click_tool(profile, "Brushes")
+    time.sleep(1.0)
+
+    bottom_x1 = ox + (-150) * scale
+    bottom_y1 = oy + 20 * scale
+    bottom_x2 = ox + 150 * scale
+    bottom_y2 = oy + 20 * scale
+    print(
+        f"    Bottom line ({bottom_x1:.0f},{bottom_y1:.0f})"
+        f" -> ({bottom_x2:.0f},{bottom_y2:.0f})"
+    )
+    adapter.drag(bottom_x1, bottom_y1, bottom_x2, bottom_y2)
+    time.sleep(0.3)
 
 
 if __name__ == "__main__":

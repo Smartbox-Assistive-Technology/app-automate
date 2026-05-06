@@ -1483,6 +1483,157 @@ def cdp_type(
         raise typer.Exit(code=1) from exc
 
 
+@app.command("whats-here")
+def whats_here(
+    radius: Annotated[
+        int,
+        typer.Option(
+            "--radius",
+            help="Half-width of the search box around the cursor in pixels.",
+        ),
+    ] = 96,
+    backend: Annotated[
+        str,
+        typer.Option(
+            "--backend",
+            help="Backend to use: uia or cdp.",
+        ),
+    ] = "uia",
+    app_name: Annotated[
+        str | None,
+        typer.Option(
+            "--app",
+            help="App to query (required for UIA). If omitted, queries all windows.",
+        ),
+    ] = None,
+    port: Annotated[
+        int,
+        typer.Option("--port", help="CDP port."),
+    ] = 9222,
+) -> None:
+    try:
+        import pyautogui
+
+        mx, my = pyautogui.position()
+        print(f"Cursor at ({mx}, {my}), searching {radius * 2}x{radius * 2} box...")
+
+        x1 = mx - radius
+        y1 = my - radius
+        x2 = mx + radius
+        y2 = my + radius
+
+        if backend == "uia":
+            _whats_here_uia(app_name, x1, y1, x2, y2)
+        elif backend == "cdp":
+            _whats_here_cdp(port, x1, y1, x2, y2)
+        else:
+            print(f"Unknown backend: {backend}")
+            raise typer.Exit(code=1)
+    except Exception as exc:
+        typer.echo(f"whats-here failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _foreground_app_name() -> str | None:
+    import ctypes
+
+    hwnd = ctypes.windll.user32.GetForegroundWindow()
+    if not hwnd:
+        return None
+    length = ctypes.windll.user32.GetWindowTextLengthW(hwnd) + 1
+    buf = ctypes.create_unicode_buffer(length)
+    ctypes.windll.user32.GetWindowTextW(hwnd, buf, length)
+    title = buf.value
+    if not title:
+        return None
+    for sep in (" - ", " — "):
+        if sep in title:
+            title = title.split(sep)[-1].strip()
+    return title
+
+
+def _whats_here_uia(app_name: str | None, x1: int, y1: int, x2: int, y2: int) -> None:
+    from app_automate.accessibility import windows_uia
+
+    if app_name:
+        elements = windows_uia.list_app_ui_elements(
+            app_name, max_depth=15, actionable_only=False
+        )
+    else:
+        app_name = _foreground_app_name()
+        if app_name:
+            print(f"  Foreground window: {app_name}")
+        elements = windows_uia.list_app_ui_elements(
+            app_name or "", max_depth=15, actionable_only=False
+        )
+
+    nearby = []
+    for el in elements:
+        if el.x is None or el.y is None:
+            continue
+        el_x1 = el.x
+        el_y1 = el.y
+        el_x2 = el.x + (el.width or 0)
+        el_y2 = el.y + (el.height or 0)
+        if el_x2 < x1 or el_x1 > x2 or el_y2 < y1 or el_y1 > y2:
+            continue
+        nearby.append(el)
+
+    if not nearby:
+        print("No UIA elements found near cursor.")
+        return
+
+    nearby.sort(key=lambda e: (e.width or 0) * (e.height or 0))
+
+    print(f"\n{len(nearby)} elements found:\n")
+    print(f"  {'Label':<30} {'Role':<20} {'X':>5} {'Y':>5} {'W':>5} {'H':>5}")
+    print(f"  {'-' * 30} {'-' * 20} {'-' * 5} {'-' * 5} {'-' * 5} {'-' * 5}")
+    for el in nearby:
+        label = (el.label or "")[:30]
+        role = (el.role or el.class_name or "")[:20]
+        print(
+            f"  {label:<30} {role:<20} "
+            f"{el.x or 0:>5} {el.y or 0:>5} "
+            f"{el.width or 0:>5} {el.height or 0:>5}"
+        )
+
+
+def _whats_here_cdp(port: int, x1: int, y1: int, x2: int, y2: int) -> None:
+    from app_automate.accessibility import cdp
+
+    elements = cdp.list_cdp_elements(port, actionable_only=False)
+
+    nearby = []
+    for el in elements:
+        if el.x is None or el.y is None:
+            continue
+        el_x1 = el.x
+        el_y1 = el.y
+        el_x2 = el.x + (el.width or 0)
+        el_y2 = el.y + (el.height or 0)
+        if el_x2 < x1 or el_x1 > x2 or el_y2 < y1 or el_y1 > y2:
+            continue
+        nearby.append(el)
+
+    if not nearby:
+        print("No CDP elements found near cursor.")
+        return
+
+    nearby.sort(key=lambda e: (e.width or 0) * (e.height or 0))
+
+    print(f"\n{len(nearby)} elements found:\n")
+    print(f"  {'Label':<30} {'Role':<20} {'X':>5} {'Y':>5} {'W':>5} {'H':>5}")
+    print(f"  {'-' * 30} {'-' * 20} {'-' * 5} {'-' * 5} {'-' * 5} {'-' * 5}")
+    for el in nearby:
+        label = (el.label or "")[:30]
+        role = (el.role or "")[:20]
+        print(
+            f"  {label:<30} {role:<20} "
+            f"{el.x or 0:>5} {el.y or 0:>5} "
+            f"{el.width or 0:>5} {el.height or 0:>5}"
+        )
+
+
 @app.command("probe")
 def probe(
     app_name: Annotated[
