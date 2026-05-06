@@ -385,18 +385,22 @@ def _uia_execute(
     from app_automate.adapters.windows_input import WindowsInputAdapter
 
     action = element.action.value
-    kwargs: dict[str, Any] = {
+    click_kwargs: dict[str, Any] = {
+        "contains": element.label,
+        "max_depth": 15,
+    }
+    find_kwargs: dict[str, Any] = {
         "contains": element.label,
         "max_depth": 15,
         "actionable_only": True,
         "enabled_only": True,
     }
     if element.automation_id:
-        find_kwargs = {**kwargs, "automation_id": element.automation_id}
+        click_kwargs["automation_id"] = element.automation_id
+        find_kwargs["automation_id"] = element.automation_id
     elif element.role:
-        find_kwargs = {**kwargs, "control_type": element.role}
-    else:
-        find_kwargs = kwargs
+        click_kwargs["control_type"] = element.role
+        find_kwargs["control_type"] = element.role
 
     if action in ("hotkey", "wait"):
         adapter = WindowsInputAdapter()
@@ -410,7 +414,7 @@ def _uia_execute(
         return None, None
 
     if action == "click":
-        target = windows_uia.click_matching_element(app_name, **find_kwargs)
+        target = windows_uia.click_matching_element(app_name, **click_kwargs)
     elif action == "type":
         type_text = text or element.text
         if type_text is None:
@@ -418,7 +422,7 @@ def _uia_execute(
                 f"type action requires --text for element '{element.label}'"
             )
         target = windows_uia.type_into_matching_element(
-            app_name, text=type_text, **find_kwargs
+            app_name, text=type_text, **click_kwargs
         )
     else:
         matches = windows_uia.find_matching_elements(app_name, **find_kwargs)

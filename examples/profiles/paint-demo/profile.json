@@ -1774,48 +1774,6 @@
       "text": null,
       "scroll_clicks": null,
       "wait_ms": null
-    },
-    "minimize": {
-      "label": "Minimize",
-      "aliases": [],
-      "role": "ButtonControl",
-      "automation_id": null,
-      "selector": null,
-      "action": "click",
-      "drag_dx": null,
-      "drag_dy": null,
-      "hotkey": null,
-      "text": null,
-      "scroll_clicks": null,
-      "wait_ms": null
-    },
-    "maximize": {
-      "label": "Maximize",
-      "aliases": [],
-      "role": "ButtonControl",
-      "automation_id": null,
-      "selector": null,
-      "action": "click",
-      "drag_dx": null,
-      "drag_dy": null,
-      "hotkey": null,
-      "text": null,
-      "scroll_clicks": null,
-      "wait_ms": null
-    },
-    "close_window[2] > child[2] > child[1] > child[1] > child[1] > child[4]": {
-      "label": "Close",
-      "aliases": [],
-      "role": "ButtonControl",
-      "automation_id": null,
-      "selector": null,
-      "action": "click",
-      "drag_dx": null,
-      "drag_dy": null,
-      "hotkey": null,
-      "text": null,
-      "scroll_clicks": null,
-      "wait_ms": null
     }
   }
 }
