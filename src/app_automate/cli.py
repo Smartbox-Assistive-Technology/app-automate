@@ -424,7 +424,34 @@ def train(
             help="Prompt for manual anchor review after LLM training completes.",
         ),
     ] = False,
+    backend: Annotated[
+        str | None,
+        typer.Option(
+            "--backend",
+            help=(
+                "Build a semantic profile from a live accessibility backend "
+                "instead of the visual/LLM path. Use 'uia' or 'cdp'."
+            ),
+        ),
+    ] = None,
 ) -> None:
+    if backend is not None:
+        if not app_name and backend == "uia":
+            typer.echo("--app is required with --backend uia", err=True)
+            raise typer.Exit(code=1)
+        try:
+            from app_automate.builder.semantic_profile import build_semantic_profile
+
+            path = build_semantic_profile(
+                app_name=app_name or "",
+                backend=backend,
+                output_dir=output_dir,
+            )
+        except Exception as exc:
+            typer.echo(f"train failed: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        typer.echo(f"Saved semantic profile: {path}")
+        return
     try:
         create_training_bundle, _ = _load_training_api()
         bundle = create_training_bundle(
@@ -466,6 +493,21 @@ def inspect_profile(
     ],
 ) -> None:
     loaded = load_profile(_profile_path(profile))
+    if loaded.type == "semantic":
+        typer.echo(f"Profile: {loaded.profile_id} (semantic, backend={loaded.backend})")
+        typer.echo(f"App: {loaded.app_name}")
+        typer.echo(f"Elements: {len(loaded.semantic_elements)}")
+        typer.echo("")
+        for eid, el in sorted(loaded.semantic_elements.items()):
+            parts = [f"  {eid}: {el.label} [{el.action.value}]"]
+            if el.role:
+                parts.append(f"role={el.role}")
+            if el.automation_id:
+                parts.append(f"automation_id={el.automation_id}")
+            if el.selector:
+                parts.append(f"selector={el.selector}")
+            typer.echo(" ".join(parts))
+        return
     describe_profile = _load_profile_describer()
     typer.echo(describe_profile(loaded))
 
@@ -956,6 +998,10 @@ def list_elements(
     ],
 ) -> None:
     loaded = load_profile(_profile_path(profile))
+    if loaded.type == "semantic":
+        for eid, el in sorted(loaded.semantic_elements.items()):
+            typer.echo(f"{eid}: {el.label} [{el.action.value}]")
+        return
     for element_id, element in sorted(loaded.elements.items()):
         typer.echo(f"{element_id}: {element.label} [{element.layout.value}]")
 
@@ -996,6 +1042,13 @@ def dry_run(
         typer.Option("--secondary-y", help="Live secondary anchor y-coordinate."),
     ] = None,
 ) -> None:
+    loaded = load_profile(_profile_path(profile))
+    if loaded.type == "semantic":
+        from app_automate.runner.runtime import dry_run_semantic_command
+
+        result = dry_run_semantic_command(command, loaded)
+        typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
+        return
     context = _runtime_context(
         profile=profile,
         screenshot=screenshot,
@@ -1044,7 +1097,18 @@ def click(
         float | None,
         typer.Option("--secondary-y", help="Live secondary anchor y-coordinate."),
     ] = None,
+    text: Annotated[
+        str | None,
+        typer.Option("--text", help="Text to type for semantic type actions."),
+    ] = None,
 ) -> None:
+    loaded = load_profile(_profile_path(profile))
+    if loaded.type == "semantic":
+        from app_automate.runner.runtime import execute_semantic_command
+
+        result = execute_semantic_command(command, loaded, text=text)
+        typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
+        return
     context = _runtime_context(
         profile=profile,
         screenshot=screenshot,

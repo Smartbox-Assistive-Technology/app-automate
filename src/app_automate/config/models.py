@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import platform
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -15,6 +16,13 @@ class LayoutMode(str, Enum):
 
 class ActionType(str, Enum):
     CLICK = "click"
+    DOUBLE_CLICK = "double_click"
+    RIGHT_CLICK = "right_click"
+    TYPE = "type"
+    DRAG = "drag"
+    SCROLL = "scroll"
+    HOTKEY = "hotkey"
+    WAIT = "wait"
 
 
 class Baseline(BaseModel):
@@ -42,6 +50,21 @@ class ElementDefinition(BaseModel):
     rel_y: float
     layout: LayoutMode
     action: ActionType = ActionType.CLICK
+
+
+class SemanticElement(BaseModel):
+    label: str
+    aliases: list[str] = Field(default_factory=list)
+    role: str | None = None
+    automation_id: str | None = None
+    selector: str | None = None
+    action: ActionType = ActionType.CLICK
+    drag_dx: float | None = None
+    drag_dy: float | None = None
+    hotkey: str | None = None
+    text: str | None = None
+    scroll_clicks: int | None = None
+    wait_ms: int | None = None
 
 
 class CheckRegion(BaseModel):
@@ -87,16 +110,26 @@ class AppProfile(BaseModel):
 
     profile_id: str
     app_name: str
+    type: Literal["visual", "semantic"] = "visual"
+    backend: str | None = None
     platform_hint: str = "windows" if platform.system() == "Windows" else "macos"
     notes: str = ""
-    baseline: Baseline
+    baseline: Baseline | None = None
     anchors: Anchors | None = None
     elements: dict[str, ElementDefinition] = Field(default_factory=dict)
     states: dict[str, AppState] = Field(default_factory=dict)
     default_state: str = "default"
+    semantic_elements: dict[str, SemanticElement] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_profile_structure(self) -> "AppProfile":
+        if self.type == "semantic":
+            if not self.backend:
+                raise ValueError("semantic profile requires 'backend' (uia or cdp)")
+            if not self.semantic_elements:
+                raise ValueError("semantic profile must have semantic_elements defined")
+            return self
+
         has_legacy_elements = bool(self.elements)
         has_states = bool(self.states)
 

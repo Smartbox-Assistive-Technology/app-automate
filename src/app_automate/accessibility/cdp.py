@@ -115,8 +115,40 @@ def click_cdp_element(
     port: int = CDP_DEFAULT_PORT,
     index: int = 1,
     exact: bool = False,
+    selector: str | None = None,
 ) -> UIElement:
     with _playwright_session(port) as page:
+        if selector:
+            locator = page.locator(selector)
+            if locator.count() > 0:
+                el = locator.first
+                box = el.bounding_box()
+                role = el.get_attribute("role") or ""
+                name = el.get_attribute("aria-label") or ""
+                if not name:
+                    try:
+                        name = el.inner_text().strip()
+                    except Exception:
+                        name = ""
+                locator.first.click()
+                if box:
+                    return CDPElement(
+                        path="cdp-selector",
+                        class_name=role,
+                        role=role,
+                        subrole=None,
+                        description=None,
+                        title=None,
+                        name=name or None,
+                        x=int(round(box["x"])),
+                        y=int(round(box["y"])),
+                        width=int(round(box["width"])),
+                        height=int(round(box["height"])),
+                        enabled=True,
+                        depth=0,
+                        child_count=0,
+                        automation_id=None,
+                    )
         elements = _collect_elements(page)
         candidates = [
             e
@@ -175,8 +207,40 @@ def type_into_cdp_element(
     index: int = 1,
     replace: bool = False,
     exact: bool = False,
+    selector: str | None = None,
 ) -> UIElement:
     with _playwright_session(port) as page:
+        if selector:
+            locator = page.locator(selector)
+            if locator.count() > 0:
+                el = locator.first
+                box = el.bounding_box()
+                role = el.get_attribute("role") or ""
+                name = el.get_attribute("aria-label") or ""
+                if not name:
+                    try:
+                        name = el.inner_text().strip()
+                    except Exception:
+                        name = ""
+                _type_into_page_element_direct(page, el, text, replace=replace)
+                if box:
+                    return CDPElement(
+                        path="cdp-selector",
+                        class_name=role or "textbox",
+                        role=role or "textbox",
+                        subrole=None,
+                        description=None,
+                        title=None,
+                        name=name or None,
+                        x=int(round(box["x"])),
+                        y=int(round(box["y"])),
+                        width=int(round(box["width"])),
+                        height=int(round(box["height"])),
+                        enabled=True,
+                        depth=0,
+                        child_count=0,
+                        automation_id=None,
+                    )
         elements = _collect_elements(page)
         candidates = [
             e
@@ -229,6 +293,24 @@ def _type_into_page_element(
         page.keyboard.type(text, delay=10)
         return
     el = locator.first
+    tag = el.evaluate("e => e.tagName")
+    if tag in ("INPUT", "TEXTAREA"):
+        if replace:
+            el.fill(text)
+        else:
+            el.click()
+            page.keyboard.type(text, delay=10)
+    else:
+        el.click()
+        page.wait_for_timeout(300)
+        if replace:
+            page.keyboard.press("Control+a")
+        page.keyboard.type(text, delay=10)
+
+
+def _type_into_page_element_direct(
+    page: Any, el: Any, text: str, *, replace: bool
+) -> None:
     tag = el.evaluate("e => e.tagName")
     if tag in ("INPUT", "TEXTAREA"):
         if replace:

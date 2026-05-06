@@ -34,6 +34,19 @@ class ResolvedCommand(BaseModel):
     state_id: str | None = None
 
 
+class SemanticResolvedCommand(BaseModel):
+    element_id: str
+    label: str
+    action: str
+    backend: str
+    selector: str | None = None
+    automation_id: str | None = None
+    role: str | None = None
+    x: float | None = None
+    y: float | None = None
+    state_id: str | None = None
+
+
 class AnchorDetectionResult(BaseModel):
     screenshot_path: str
     primary: dict[str, float]
@@ -267,4 +280,312 @@ def dry_run_command(command: str, context: RuntimeContext) -> ResolvedCommand:
         y=round(y, 2),
         layout=element.layout.value,
         state_id=context.active_state_id,
+    )
+
+
+def resolve_semantic_element_id(command: str, profile: AppProfile) -> str:
+    normalized = command.strip().casefold()
+    for element_id, element in profile.semantic_elements.items():
+        candidates = [element.label, *element.aliases, element_id]
+        if any(normalized == candidate.casefold() for candidate in candidates):
+            return element_id
+    raise KeyError(f"no element matches command: {command}")
+
+
+def dry_run_semantic_command(
+    command: str, profile: AppProfile
+) -> SemanticResolvedCommand:
+    element_id = resolve_semantic_element_id(command, profile)
+    element = profile.semantic_elements[element_id]
+    backend = profile.backend or "uia"
+
+    x: float | None = None
+    y: float | None = None
+
+    if backend == "uia":
+        x, y = _uia_locate(profile.app_name, element)
+    elif backend == "cdp":
+        x, y = _cdp_locate(element)
+
+    return SemanticResolvedCommand(
+        element_id=element_id,
+        label=element.label,
+        action=element.action.value,
+        backend=backend,
+        selector=element.selector,
+        automation_id=element.automation_id,
+        role=element.role,
+        x=round(x, 2) if x is not None else None,
+        y=round(y, 2) if y is not None else None,
+    )
+
+
+def execute_semantic_command(
+    command: str, profile: AppProfile, *, text: str | None = None
+) -> SemanticResolvedCommand:
+    element_id = resolve_semantic_element_id(command, profile)
+    element = profile.semantic_elements[element_id]
+    backend = profile.backend or "uia"
+
+    x: float | None = None
+    y: float | None = None
+
+    if backend == "uia":
+        x, y = _uia_execute(profile.app_name, element, text=text)
+    elif backend == "cdp":
+        x, y = _cdp_execute(element, text=text)
+
+    return SemanticResolvedCommand(
+        element_id=element_id,
+        label=element.label,
+        action=element.action.value,
+        backend=backend,
+        selector=element.selector,
+        automation_id=element.automation_id,
+        role=element.role,
+        x=round(x, 2) if x is not None else None,
+        y=round(y, 2) if y is not None else None,
+    )
+
+
+def _uia_locate(app_name: str, element: Any) -> tuple[float | None, float | None]:
+    from app_automate.accessibility import windows_uia
+
+    kwargs: dict[str, Any] = {
+        "contains": element.label,
+        "max_depth": 15,
+        "actionable_only": True,
+        "enabled_only": True,
+    }
+    if element.automation_id:
+        matches = windows_uia.find_matching_elements(
+            app_name, automation_id=element.automation_id, **kwargs
+        )
+    elif element.role:
+        matches = windows_uia.find_matching_elements(
+            app_name, control_type=element.role, **kwargs
+        )
+    else:
+        matches = windows_uia.find_matching_elements(app_name, **kwargs)
+    if not matches:
+        raise RuntimeError(f"UIA could not find element matching '{element.label}'")
+    target = matches[0]
+    if target.x is None or target.y is None:
+        return None, None
+    return (
+        target.x + (target.width or 0) / 2.0,
+        target.y + (target.height or 0) / 2.0,
+    )
+
+
+def _uia_execute(
+    app_name: str, element: Any, *, text: str | None = None
+) -> tuple[float | None, float | None]:
+    from app_automate.accessibility import windows_uia
+    from app_automate.adapters.windows_input import WindowsInputAdapter
+
+    action = element.action.value
+    kwargs: dict[str, Any] = {
+        "contains": element.label,
+        "max_depth": 15,
+        "actionable_only": True,
+        "enabled_only": True,
+    }
+    if element.automation_id:
+        find_kwargs = {**kwargs, "automation_id": element.automation_id}
+    elif element.role:
+        find_kwargs = {**kwargs, "control_type": element.role}
+    else:
+        find_kwargs = kwargs
+
+    if action in ("hotkey", "wait"):
+        adapter = WindowsInputAdapter()
+        if action == "hotkey":
+            keys = (element.hotkey or "").split("+")
+            adapter.hotkey(*keys)
+        elif action == "wait":
+            import time
+
+            time.sleep((element.wait_ms or 500) / 1000.0)
+        return None, None
+
+    if action == "click":
+        target = windows_uia.click_matching_element(app_name, **find_kwargs)
+    elif action == "type":
+        type_text = text or element.text
+        if type_text is None:
+            raise RuntimeError(
+                f"type action requires --text for element '{element.label}'"
+            )
+        target = windows_uia.type_into_matching_element(
+            app_name, text=type_text, **find_kwargs
+        )
+    else:
+        matches = windows_uia.find_matching_elements(app_name, **find_kwargs)
+        if not matches:
+            raise RuntimeError(f"UIA could not find element matching '{element.label}'")
+        target = matches[0]
+
+    if target.x is None or target.y is None:
+        return None, None
+    cx = target.x + (target.width or 0) / 2.0
+    cy = target.y + (target.height or 0) / 2.0
+
+    if action in ("drag", "double_click", "right_click", "scroll"):
+        adapter = WindowsInputAdapter()
+        if action == "drag":
+            dx = element.drag_dx or 0
+            dy = element.drag_dy or 0
+            adapter.drag(cx, cy, cx + dx, cy + dy)
+        elif action == "double_click":
+            adapter.double_click(cx, cy)
+        elif action == "right_click":
+            adapter.right_click(cx, cy)
+        elif action == "scroll":
+            adapter.scroll(cx, cy, element.scroll_clicks or 0)
+
+    return cx, cy
+
+
+def _cdp_locate(element: Any) -> tuple[float | None, float | None]:
+    from app_automate.accessibility import cdp
+
+    if element.selector:
+        return _cdp_locate_by_selector(element.selector)
+    matches = cdp.find_cdp_elements(
+        contains=element.label,
+        actionable_only=True,
+        enabled_only=True,
+    )
+    if not matches:
+        raise RuntimeError(f"CDP could not find element matching '{element.label}'")
+    target = matches[0]
+    if target.x is None or target.y is None:
+        return None, None
+    return (
+        target.x + (target.width or 0) / 2.0,
+        target.y + (target.height or 0) / 2.0,
+    )
+
+
+def _cdp_locate_by_selector(selector: str) -> tuple[float | None, float | None]:
+    from playwright.sync_api import sync_playwright
+
+    pw = sync_playwright().start()
+    browser = None
+    try:
+        browser = pw.chromium.connect_over_cdp("http://localhost:9222")
+        page = browser.contexts[0].pages[0]
+        locator = page.locator(selector)
+        if locator.count() == 0:
+            raise RuntimeError(f"CDP selector matched nothing: {selector}")
+        box = locator.first.bounding_box()
+        if box is None:
+            return None, None
+        return box["x"] + box["width"] / 2.0, box["y"] + box["height"] / 2.0
+    finally:
+        try:
+            if browser:
+                browser.close()
+        except Exception:
+            pass
+        try:
+            pw.stop()
+        except Exception:
+            pass
+
+
+def _cdp_execute(
+    element: Any, *, text: str | None = None
+) -> tuple[float | None, float | None]:
+    from app_automate.accessibility import cdp
+
+    action = element.action.value
+
+    if action in ("hotkey", "wait"):
+        from playwright.sync_api import sync_playwright
+
+        pw = sync_playwright().start()
+        browser = None
+        try:
+            browser = pw.chromium.connect_over_cdp("http://localhost:9222")
+            page = browser.contexts[0].pages[0]
+            if action == "hotkey":
+                keys = (element.hotkey or "").split("+")
+                page.keyboard.press("+".join(keys))
+            elif action == "wait":
+                page.wait_for_timeout(element.wait_ms or 500)
+        finally:
+            try:
+                if browser:
+                    browser.close()
+            except Exception:
+                pass
+            try:
+                pw.stop()
+            except Exception:
+                pass
+        return None, None
+
+    if action == "click":
+        target = cdp.click_cdp_element(
+            contains=element.label,
+            selector=element.selector,
+        )
+    elif action == "type":
+        type_text = text or element.text
+        if type_text is None:
+            raise RuntimeError(
+                f"type action requires --text for element '{element.label}'"
+            )
+        target = cdp.type_into_cdp_element(
+            contains=element.label,
+            text=type_text,
+            selector=element.selector,
+        )
+    elif action in ("drag", "double_click", "right_click", "scroll"):
+        x, y = _cdp_locate(element)
+        if x is None or y is None:
+            raise RuntimeError(
+                f"CDP could not locate element for {action}: {element.label}"
+            )
+        from playwright.sync_api import sync_playwright
+
+        pw = sync_playwright().start()
+        browser = None
+        try:
+            browser = pw.chromium.connect_over_cdp("http://localhost:9222")
+            page = browser.contexts[0].pages[0]
+            if action == "drag":
+                dx = element.drag_dx or 0
+                dy = element.drag_dy or 0
+                page.mouse.move(x, y)
+                page.mouse.down()
+                page.mouse.move(x + dx, y + dy, steps=20)
+                page.mouse.up()
+            elif action == "double_click":
+                page.mouse.dblclick(x, y)
+            elif action == "right_click":
+                page.mouse.click(x, y, button="right")
+            elif action == "scroll":
+                page.mouse.wheel(0, element.scroll_clicks or 0)
+        finally:
+            try:
+                if browser:
+                    browser.close()
+            except Exception:
+                pass
+            try:
+                pw.stop()
+            except Exception:
+                pass
+        return x, y
+    else:
+        return _cdp_locate(element)
+
+    if target.x is None or target.y is None:
+        return None, None
+    return (
+        target.x + (target.width or 0) / 2.0,
+        target.y + (target.height or 0) / 2.0,
     )

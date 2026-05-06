@@ -74,6 +74,7 @@ def find_matching_elements(
     *,
     contains: str,
     control_type: str | None = None,
+    automation_id: str | None = None,
     max_depth: int = 8,
     actionable_only: bool = True,
     enabled_only: bool = True,
@@ -90,6 +91,7 @@ def find_matching_elements(
         for element in elements
         if _matches_element(element, needle)
         and (control_type is None or element.class_name == control_type)
+        and (automation_id is None or element.automation_id == automation_id)
         and (not enabled_only or element.enabled is not False)
     ]
     return sorted(
@@ -150,6 +152,7 @@ def click_matching_element(
     *,
     contains: str,
     control_type: str | None = None,
+    automation_id: str | None = None,
     max_depth: int = 8,
     index: int = 1,
 ) -> UIAElement:
@@ -157,6 +160,7 @@ def click_matching_element(
         app_name,
         contains=contains,
         control_type=control_type,
+        automation_id=automation_id,
         max_depth=max_depth,
         actionable_only=True,
         enabled_only=True,
@@ -307,6 +311,7 @@ def _find_matching_controls(
     *,
     contains: str,
     control_type: str | None,
+    automation_id: str | None = None,
     max_depth: int,
     actionable_only: bool,
     enabled_only: bool,
@@ -335,6 +340,8 @@ def _find_matching_controls(
             if not _matches_element(element, needle):
                 continue
             if control_type is not None and element.class_name != control_type:
+                continue
+            if automation_id is not None and element.automation_id != automation_id:
                 continue
             if enabled_only and element.enabled is False:
                 continue

@@ -108,6 +108,17 @@ def _front_window_bounds_windows(app_name: str) -> tuple[int, int, int, int]:
     return left, top, right - left, bottom - top
 
 
+def activate_app(app_name: str) -> None:
+    if platform.system() == "Windows":
+        _activate_app_windows(app_name)
+    else:
+        import subprocess
+
+        subprocess.run(
+            ["osascript", "-e", f'tell application "{app_name}" to activate']
+        )
+
+
 def _activate_app_windows(app_name: str) -> None:
     import ctypes
 
