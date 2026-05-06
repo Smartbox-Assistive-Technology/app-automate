@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import platform
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -86,7 +87,7 @@ class AppProfile(BaseModel):
 
     profile_id: str
     app_name: str
-    platform_hint: str = "macos"
+    platform_hint: str = "windows" if platform.system() == "Windows" else "macos"
     notes: str = ""
     baseline: Baseline
     anchors: Anchors | None = None

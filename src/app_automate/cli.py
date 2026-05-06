@@ -376,7 +376,10 @@ def train(
         str | None,
         typer.Option(
             "--app",
-            help="Capture and crop the front window of a macOS app by name.",
+            help=(
+                "Capture and crop the front window of an app "
+                "by name (macOS or Windows)."
+            ),
         ),
     ] = None,
     settings: Annotated[
